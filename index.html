@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Loreforge — Build Worlds. Write Legends.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ═══ SCREEN: CREATE ═══ -->
+  <div id="screen-create" class="screen active">
+    <div class="create-wrap">
+      <div class="brand">
+        <h1>Loreforge</h1>
+        <p>Build worlds. Write legends.</p>
+      </div>
+      <div class="divider"><span></span><em>✦</em><span></span></div>
+
+      <div class="field" id="apiKeyField">
+        <label>Anthropic API Key</label>
+        <input id="apiKey" type="password" placeholder="sk-ant-…  (saved locally in your browser)"/>
+        <span class="field-hint">Your key is never sent anywhere except the Anthropic API directly.</span>
+      </div>
+
+      <div class="divider"><span></span><em>✦</em><span></span></div>
+
+      <div class="field">
+        <label>World Name</label>
+        <input id="worldName" type="text" placeholder="e.g. Aethermoor, The Sunken Realms…"/>
+      </div>
+
+      <div class="field">
+        <label>Genre / Vibe</label>
+        <div class="genre-grid">
+          <button class="genre-btn" data-genre="Dark Fantasy">Dark Fantasy</button>
+          <button class="genre-btn" data-genre="High Fantasy">High Fantasy</button>
+          <button class="genre-btn" data-genre="Grimdark">Grimdark</button>
+          <button class="genre-btn" data-genre="Mythic / Ancient">Mythic / Ancient</button>
+          <button class="genre-btn" data-genre="Cosmic Horror">Cosmic Horror</button>
+          <button class="genre-btn" data-genre="Steampunk">Steampunk</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>World Premise</label>
+        <textarea id="worldPremise" placeholder="Describe your world's core concept, conflict, or lore seed. The AI will expand from this…"></textarea>
+      </div>
+
+      <div class="divider"><span></span><em>✦</em><span></span></div>
+      <button class="btn-forge" id="btnForge">⚒ Forge This World</button>
+    </div>
+  </div>
+
+  <!-- ═══ SCREEN: LOADING ═══ -->
+  <div id="screen-loading" class="screen">
+    <div class="loading-rune">⚜</div>
+    <div class="loading-text" id="loadingText">Consulting the ancient records…</div>
+  </div>
+
+  <!-- ═══ SCREEN: MAIN ═══ -->
+  <div id="screen-main" class="screen">
+    <nav class="left-nav" aria-label="Lore categories">
+      <button class="nav-btn active" data-nav="regions"    title="Regions">◈</button>
+      <button class="nav-btn"        data-nav="characters" title="Characters">⚔</button>
+      <button class="nav-btn"        data-nav="factions"   title="Factions">⚑</button>
+      <button class="nav-btn"        data-nav="powers"     title="Power Systems">✦</button>
+      <button class="nav-btn"        data-nav="history"    title="History">📜</button>
+      <button class="nav-btn"        data-nav="prophecies" title="Prophecies">◉</button>
+      <button class="nav-btn"        data-nav="artifacts"  title="Artifacts">⚗</button>
+      <div class="nav-sep"></div>
+      <button class="nav-btn" data-screen="oracle" title="Oracle AI">☽</button>
+      <button class="nav-btn" data-screen="story"  title="Story Generator">✍</button>
+      <button class="nav-btn" data-screen="save"   title="Save & Share">◫</button>
+    </nav>
+
+    <aside class="content-panel">
+      <div class="panel-header">
+        <h2 id="panelTitle">Regions</h2>
+        <p id="panelSub">Your world's lands</p>
+      </div>
+      <div class="panel-scroll" id="panelScroll"></div>
+      <div class="panel-footer">
+        <button class="btn-add" id="btnAdd">+ Add Entry</button>
+      </div>
+    </aside>
+
+    <main class="map-zone">
+      <div class="map-toolbar">
+        <span class="map-toolbar-title" id="mapLabel">World Map</span>
+        <button class="btn-sm" data-screen="create">+ New World</button>
+        <button class="btn-sm" data-screen="oracle">☽ Oracle</button>
+        <button class="btn-sm" data-screen="story">✍ Story</button>
+      </div>
+      <div class="map-wrap" id="mapWrap">
+        <svg id="worldMap" viewBox="0 0 700 500" xmlns="http://www.w3.org/2000/svg"
+             preserveAspectRatio="xMidYMid meet" role="img" aria-label="World map"></svg>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+    </main>
+
+    <aside class="detail-zone">
+      <div class="detail-scroll" id="detailScroll">
+        <div class="placeholder-msg">Select an entry to view its lore.</div>
+      </div>
+      <div class="detail-footer" id="detailFooter"></div>
+    </aside>
+  </div>
+
+  <!-- ═══ SCREEN: ORACLE ═══ -->
+  <div id="screen-oracle" class="screen">
+    <div class="oracle-layout">
+      <aside class="oracle-sidebar">
+        <h3>Quick Prompts</h3>
+        <button class="oracle-prompt-btn" data-q="Tell me about the major conflicts in this world.">Major conflicts</button>
+        <button class="oracle-prompt-btn" data-q="What hidden alliances exist between factions?">Hidden alliances</button>
+        <button class="oracle-prompt-btn" data-q="Generate a mysterious NPC for my world.">Mysterious NPC</button>
+        <button class="oracle-prompt-btn" data-q="What ancient secret threatens this world?">Ancient secret</button>
+        <button class="oracle-prompt-btn" data-q="Describe the most dangerous region and why.">Dangerous region</button>
+        <button class="oracle-prompt-btn" data-q="What is the nature of magic or power in this world?">Power &amp; magic</button>
+        <button class="oracle-prompt-btn" data-q="Create a prophecy about the end of this world.">A prophecy</button>
+        <button class="oracle-prompt-btn" data-q="What artifacts of great power exist here?">Great artifacts</button>
+        <div class="sidebar-footer">
+          <button class="btn-sm" data-screen="main">← Map</button>
+          <button class="btn-sm" id="btnClearChat">✕ Clear</button>
+        </div>
+      </aside>
+      <div class="oracle-main">
+        <div class="oracle-header">
+          <h2>The Oracle</h2>
+          <p id="oracleSubtitle">Ask anything about your world</p>
+        </div>
+        <div class="chat-msgs" id="chatMsgs" role="log" aria-live="polite">
+          <div class="msg-ai">Forge a world to awaken the Oracle.</div>
+        </div>
+        <div class="chat-input-row">
+          <input id="chatInput" type="text" placeholder="Ask the Oracle anything…" autocomplete="off"/>
+          <button class="chat-send-btn" id="chatSendBtn">Ask</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SCREEN: STORY ═══ -->
+  <div id="screen-story" class="screen">
+    <div class="story-header">
+      <h2>Story Generator</h2>
+      <button class="btn-sm" data-screen="main">← Back to Map</button>
+    </div>
+    <div class="story-body">
+      <aside class="story-options">
+        <h3>Story Mode</h3>
+        <button class="story-mode-btn selected" data-mode="novel">
+          <strong>Novel Chapter</strong><span>Rich prose narrative</span>
+        </button>
+        <button class="story-mode-btn" data-mode="quest">
+          <strong>Quest / Story Hook</strong><span>RPG adventure seeds</span>
+        </button>
+        <button class="story-mode-btn" data-mode="campaign">
+          <strong>D&amp;D Campaign</strong><span>Full tabletop session</span>
+        </button>
+        <div class="story-focus-wrap">
+          <h3>Focus On</h3>
+          <select id="storyFocus"><option value="the whole world">The whole world</option></select>
+        </div>
+      </aside>
+      <div class="story-content">
+        <div class="story-config">
+          <div class="field">
+            <label>Story Seed / Prompt</label>
+            <input id="storySeed" type="text" placeholder="e.g. A hero discovers the prophecy is a lie…"/>
+          </div>
+          <button class="btn-forge story-gen-btn" id="btnGenerateStory">Generate</button>
+        </div>
+        <div class="story-output" id="storyOutput">
+          <div class="story-placeholder">Choose a mode and forge your legend.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SCREEN: SAVE ═══ -->
+  <div id="screen-save" class="screen">
+    <div class="save-wrap">
+      <h2>Save &amp; Share Your World</h2>
+      <div class="save-card">
+        <h3>Auto-Save</h3>
+        <p>Your world saves automatically in your browser and persists between visits.</p>
+        <div id="autoSaveStatus" class="save-status"></div>
+      </div>
+      <div class="save-card">
+        <h3>Export JSON Codex</h3>
+        <p>Download your full world as a portable file you can re-import anytime.</p>
+        <button class="btn-save-action" id="btnExport">↓ Download World Codex (.json)</button>
+      </div>
+      <div class="save-card">
+        <h3>Import World</h3>
+        <p>Load a previously exported JSON codex.</p>
+        <input type="file" id="importFile" accept=".json" style="display:none"/>
+        <button class="btn-save-action" id="btnImport">↑ Import World Codex</button>
+        <div id="importError" class="field-hint error" style="display:none"></div>
+      </div>
+      <div class="save-card">
+        <h3>Share Your World</h3>
+        <p>Generate a shareable encoded snapshot (best for small worlds — use export for large ones).</p>
+        <button class="btn-save-action" id="btnShare">⟳ Generate Share Link</button>
+        <div class="share-box" id="shareBox" style="display:none"></div>
+      </div>
+      <div class="save-nav">
+        <button class="btn-sm" data-screen="main">← Back to Map</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ MODAL: ADD ENTRY ═══ -->
+  <div class="modal-overlay" id="addModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <h3 id="modalTitle">Add Entry</h3>
+      <div class="field">
+        <label id="modalNameLabel">Name</label>
+        <input id="modalName" type="text" autocomplete="off"/>
+      </div>
+      <div class="field">
+        <label id="modalTypeLabel">Type / Role</label>
+        <input id="modalType" type="text" autocomplete="off"/>
+      </div>
+      <div class="field">
+        <label>Seed Description <span class="field-hint">(optional)</span></label>
+        <textarea id="modalSeed" style="min-height:60px" placeholder="A brief idea — the AI will expand it…"></textarea>
+      </div>
+      <div class="modal-btns">
+        <button class="btn-cancel" id="btnCancel">Cancel</button>
+        <button class="btn-generate" id="btnGenerate">⚒ Generate with AI</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ DIAGNOSTICS ═══ -->
+  <button id="diagToggle" aria-expanded="false">
+    <span class="diag-dot"></span>Diagnostics
+  </button>
+
+  <div id="diagBar">
+    <div class="diag-header">
+      <span class="diag-title">⚙ Diagnostics</span>
+      <span class="diag-phase phase-idle" id="diagPhase">IDLE</span>
+      <button class="diag-close" id="diagClose" aria-label="Close diagnostics">✕</button>
+    </div>
+    <div class="diag-metrics">
+      <div class="metric"><div class="metric-val" id="m-uptime">0s</div><div class="metric-label">Uptime</div></div>
+      <div class="metric"><div class="metric-val" id="m-checks">0</div><div class="metric-label">Scans</div></div>
+      <div class="metric"><div class="metric-val" id="m-healed">0</div><div class="metric-label">Healed</div></div>
+      <div class="metric"><div class="metric-val" id="m-errors">0</div><div class="metric-label">Errors</div></div>
+      <div class="metric"><div class="metric-val" id="m-apiok">—</div><div class="metric-label">Latency</div></div>
+    </div>
+    <div class="diag-checks-wrap">
+      <div class="diag-col-title">Health Checks <span></span></div>
+      <div class="checks-row" id="checks-row"></div>
+    </div>
+    <div class="diag-log" id="diagLog"></div>
+    <div class="diag-actions">
+      <button class="btn-diag" id="btnQuickScan">▷ Quick Scan</button>
+      <button class="btn-diag" id="btnDeepScan">⟳ Deep Scan</button>
+      <button class="btn-diag" id="btnHeal" style="display:none">✦ Auto-Heal</button>
+      <button class="btn-diag" id="btnClearLog">⌫ Clear Log</button>
+      <span style="flex:1"></span>
+      <span class="diag-summary" id="diagSummary">System initializing…</span>
+    </div>
+  </div>
+
+</div><!-- /.app -->
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

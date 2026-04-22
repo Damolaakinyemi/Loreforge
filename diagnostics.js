@@ -93,16 +93,19 @@ const CHECKS = [
     },
   },
   {
-    id:       'regions',
-    label:    'Regions',
+    id:       'world_forge',
+    label:    'World Forge',
     canRepair: false,
     test: async () => {
-      if (!hasWorld()) return 'No world loaded';
-      const regions = AppState.world.regions || [];
-      if (!regions.length) throw new Error('No regions defined');
-      const invalid = regions.filter(r => !r.name || typeof r.x === 'undefined');
-      if (invalid.length) throw new Error(`${invalid.length} region(s) missing name or coordinates`);
-      return `${regions.length} regions OK`;
+      // Check the world was forged successfully if one is loaded
+      if (!hasWorld()) return 'No world loaded (expected on fresh start)';
+      const W = AppState.world;
+      const regions = W.regions || [];
+      if (regions.length === 0) throw new Error('World has no regions — may have been truncated during generation');
+      if (regions.length < 5) throw new Error(`Only ${regions.length} region(s) — world may be incomplete. Try re-forging.`);
+      const malformed = regions.filter(r => !r.name || typeof r.x === 'undefined' || typeof r.y === 'undefined');
+      if (malformed.length) throw new Error(`${malformed.length} region(s) missing required fields`);
+      return `${regions.length} regions forged OK`;
     },
   },
   {

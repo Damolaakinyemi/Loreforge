@@ -151,23 +151,92 @@ export function parseJsonResponse(raw) {
 
   // Find outermost JSON object
   const start = text.indexOf('{');
-  const end   = text.lastIndexOf('}');
+  let end = text.lastIndexOf('}');
 
-  if (start < 0 || end < 0) {
+  if (start < 0) {
     throw new ApiError(
       'AI response did not contain a JSON object. Try again.',
       'PARSE_ERROR'
     );
   }
 
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new ApiError(
-      `Failed to parse AI JSON: ${e.message}`,
-      'PARSE_ERROR'
-    );
+  // If no closing brace found, the response was truncated — attempt repair
+  if (end < 0 || end < start) {
+    text = attemptJsonRepair(text.slice(start));
+    end = text.lastIndexOf('}');
+    if (end < 0) {
+      throw new ApiError(
+        'AI response was truncated and could not be repaired. Try again.',
+        'TRUNCATED_RESPONSE'
+      );
+    }
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new ApiError(`Truncated JSON repair failed: ${e.message}`, 'PARSE_ERROR');
+    }
   }
+
+  const candidate = text.slice(start, end + 1);
+
+  try {
+    return JSON.parse(candidate);
+  } catch (e) {
+    // Attempt repair on malformed (but complete-looking) JSON
+    const repaired = attemptJsonRepair(candidate);
+    try {
+      return JSON.parse(repaired);
+    } catch (e2) {
+      throw new ApiError(
+        `Failed to parse AI JSON: ${e.message}. Try again — the response may have been cut off.`,
+        'PARSE_ERROR'
+      );
+    }
+  }
+}
+
+/**
+ * Attempts to repair truncated or malformed JSON by closing open
+ * arrays and objects. Handles the most common truncation patterns.
+ * @param {string} partial - Potentially incomplete JSON string
+ * @returns {string} Best-effort repaired JSON string
+ */
+function attemptJsonRepair(partial) {
+  let s = partial.trimEnd();
+
+  // Remove trailing comma before a closing bracket (common AI mistake)
+  s = s.replace(/,\s*$/, '');
+
+  // Count unclosed braces and brackets
+  let braces = 0, brackets = 0;
+  let inString = false, escaped = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') braces++;
+    else if (ch === '}') braces--;
+    else if (ch === '[') brackets++;
+    else if (ch === ']') brackets--;
+  }
+
+  // If we're mid-string, close it
+  if (inString) s += '"';
+
+  // Remove any dangling incomplete field at the end
+  // e.g. ..."color":"#3a  — remove the incomplete value
+  s = s.replace(/,\s*"[^"]*"\s*:\s*"[^"]*$/, '');
+  s = s.replace(/,\s*"[^"]*"\s*:\s*$/, '');
+  s = s.replace(/,\s*"[^"]*"\s*$/, '');
+
+  // Close open brackets then braces (order matters)
+  for (let i = 0; i < brackets; i++) s += ']';
+  for (let i = 0; i < braces; i++) s += '}';
+
+  return s;
 }
 
 // ─────────────────────────────────────════════════════════════

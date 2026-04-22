@@ -266,19 +266,37 @@ async function forgeWorld() {
 
   diagLog('info', `Forging world: "${name}" (${AppState.selectedGenre})`);
 
-  try {
+  // Helper: attempt world generation with configurable region count
+  async function attemptForge(regionCount) {
     const raw = await callApi(
-      `You are a world-building AI. Generate a richly detailed world.
+      `You are a world-building AI. Generate a world with exactly ${regionCount} regions.
 World Name: ${name}. Genre: ${AppState.selectedGenre}. Premise: ${premise || 'Invent something compelling and original.'}.
-Respond ONLY with valid JSON (no markdown, no explanation). Required schema:
-{"worldName":"string","genre":"string","tagline":"evocative one-liner","overview":"2-3 sentences describing the world","regions":[{"id":"r1","name":"string","type":"string","description":"2-3 sentences","secret":"hidden truth","x":200,"y":180,"radius":65,"color":"#hex"}]}
-Requirements:
-- Exactly 7 regions
-- Spread x values 80–620, y values 60–440
-- Vary radius 50–90 per region
-- Colors must be dark/muted hex values: deep slates, forest greens, charcoal purples, blood reds — nothing bright or pastel`,
-      { maxTokens: 1400 }
+Respond ONLY with valid JSON. No markdown, no explanation, no trailing text after the closing brace.
+Schema (follow exactly):
+{"worldName":"...","genre":"...","tagline":"one evocative line","overview":"2-3 sentences","regions":[{"id":"r1","name":"...","type":"...","description":"2 sentences max","secret":"one sentence","x":150,"y":120,"radius":60,"color":"#3a5a7a"}]}
+Rules:
+- Exactly ${regionCount} regions in the array
+- x: 80-620, y: 60-440, radius: 50-85
+- Colors: dark muted hex only (no bright or pastel)
+- Keep each region description under 40 words
+- Keep each secret under 20 words
+- Output must be complete valid JSON — do not cut off`,
+      { maxTokens: 2800 }
     );
+    return raw;
+  }
+
+  try {
+    let raw;
+    try {
+      raw = await attemptForge(7);
+    } catch (firstErr) {
+      // If first attempt fails with a network/API error, re-throw immediately
+      if (firstErr.code !== 'PARSE_ERROR' && firstErr.code !== 'TRUNCATED_RESPONSE') throw firstErr;
+      // Parse/truncation error — retry with 5 regions as fallback
+      diagLog('warn', `First forge attempt truncated — retrying with 5 regions`);
+      raw = await attemptForge(5);
+    }
 
     clearInterval(phraseIv);
 

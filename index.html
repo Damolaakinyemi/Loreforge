@@ -12,57 +12,79 @@
 <body>
 <div class="app" id="app">
 
-  <!-- ═══ SCREEN: WELCOME ═══ -->
-  <div id="screen-welcome" class="screen active">
-    <div class="welcome-wrap">
-      <div class="brand">
-        <div class="brand-rune">⚜</div>
+  <!-- ═══ SCREEN: LOGIN ═══ -->
+  <div id="screen-login" class="screen active">
+    <div class="login-bg"></div>
+    <div class="login-wrap">
+      <div class="login-brand">
+        <div class="login-rune">⚜</div>
         <h1>Loreforge</h1>
         <p>Build worlds. Forge legends. Watch civilizations rise.</p>
       </div>
-      <div class="divider"><span></span><em>✦</em><span></span></div>
-
-      <div class="field">
-        <label>Anthropic API Key</label>
-        <input id="apiKey" type="password" placeholder="sk-ant-… (stored in your browser only)"/>
-        <span class="field-hint">Your key is only used to call the Anthropic API directly — never stored on any server.</span>
-      </div>
-
-      <div class="welcome-actions">
-        <button class="btn-forge" id="btnNewWorld">⚒ Build a New World</button>
-        <button class="btn-secondary" id="btnLoadWorld">↑ Load Saved World</button>
-        <input type="file" id="importFile" accept=".json" style="display:none"/>
+      <div class="login-card">
+        <div class="login-tabs">
+          <button class="login-tab active" data-tab="login">Sign In</button>
+          <button class="login-tab" data-tab="register">New Account</button>
+        </div>
+        <div class="login-panel active" id="panel-login">
+          <div class="field"><label>Username</label><input id="loginUsername" type="text" placeholder="Your lorekeeper name…" autocomplete="username"/></div>
+          <div class="field"><label>Password</label><input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+          <div class="field"><label>Anthropic API Key</label><input id="loginApiKey" type="password" placeholder="sk-ant-…"/><span class="field-hint">Stored locally — never sent to any server except Anthropic.</span></div>
+          <button class="btn-forge" id="btnLogin">Enter the Forge</button>
+          <div class="login-error" id="loginError"></div>
+        </div>
+        <div class="login-panel" id="panel-register">
+          <div class="field"><label>Choose a Username</label><input id="regUsername" type="text" placeholder="Your lorekeeper name…" autocomplete="username"/></div>
+          <div class="field"><label>Choose a Password</label><input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password"/></div>
+          <div class="field"><label>Anthropic API Key</label><input id="regApiKey" type="password" placeholder="sk-ant-…"/><span class="field-hint">Required to generate worlds. Stored in your browser only.</span></div>
+          <button class="btn-forge" id="btnRegister">Create Account</button>
+          <div class="login-error" id="registerError"></div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- ═══ SCREEN: INTERVIEW WIZARD ═══ -->
+  <!-- ═══ SCREEN: WORLD HUB ═══ -->
+  <div id="screen-hub" class="screen">
+    <div class="hub-wrap">
+      <div class="hub-header">
+        <div>
+          <h1 class="hub-title">⚜ Loreforge</h1>
+          <p class="hub-user">Logged in as <strong id="hubUsername">Lorekeeper</strong></p>
+        </div>
+        <button class="btn-sm" id="btnLogout">Sign Out</button>
+      </div>
+      <div class="hub-actions">
+        <button class="btn-forge hub-new-btn" id="btnNewWorld">⚒ Build a New World</button>
+        <input type="file" id="importFile" accept=".json" style="display:none"/>
+        <button class="btn-secondary" id="btnImportWorld">↑ Import World File</button>
+      </div>
+      <div class="hub-divider"><span></span><em>✦ Your Saved Worlds ✦</em><span></span></div>
+      <div class="hub-saves" id="hubSaves"></div>
+    </div>
+  </div>
+
+  <!-- ═══ SCREEN: INTERVIEW ═══ -->
   <div id="screen-interview" class="screen">
     <div class="interview-layout">
-      <!-- Progress sidebar -->
       <aside class="interview-sidebar">
         <div class="interview-sidebar-top">
           <div class="interview-brand">Loreforge</div>
-          <div class="interview-progress" id="interviewProgress">
-            <!-- Steps rendered by JS -->
-          </div>
+          <div class="interview-progress" id="interviewProgress"></div>
         </div>
         <div class="interview-sidebar-bottom">
-          <div class="progress-bar-wrap">
-            <div class="progress-bar" id="progressBar" style="width:0%"></div>
-          </div>
+          <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
           <div class="progress-label" id="progressLabel">Step 1 of 7</div>
         </div>
       </aside>
-
-      <!-- Main question area -->
       <div class="interview-main">
-        <div class="interview-content" id="interviewContent">
-          <!-- Rendered by JS -->
-        </div>
+        <div class="interview-content" id="interviewContent"></div>
         <div class="interview-nav">
           <button class="btn-secondary" id="btnInterviewBack">← Back</button>
-          <button class="btn-forge interview-next-btn" id="btnInterviewNext">Continue →</button>
+          <div class="interview-nav-right">
+            <button class="btn-surprise" id="btnSurpriseStep" title="Let the AI fill this step randomly">🎲 Surprise Me</button>
+            <button class="btn-forge interview-next-btn" id="btnInterviewNext">Continue →</button>
+          </div>
         </div>
       </div>
     </div>
@@ -75,26 +97,27 @@
     <div class="loading-sub" id="loadingSub"></div>
   </div>
 
-  <!-- ═══ SCREEN: MAIN (Map + Lore) ═══ -->
+  <!-- ═══ SCREEN: MAIN ═══ -->
   <div id="screen-main" class="screen">
-    <nav class="left-nav" aria-label="Navigation">
-      <button class="nav-btn" data-screen="welcome" title="Home">⌂</button>
+
+    <nav class="left-nav">
+      <button class="nav-btn" data-screen="hub" title="My Worlds">⌂</button>
       <div class="nav-sep"></div>
-      <button class="nav-btn active" data-nav="map"         title="World Map">◈</button>
-      <button class="nav-btn"        data-nav="regions"     title="Regions">⛰</button>
-      <button class="nav-btn"        data-nav="characters"  title="Characters">⚔</button>
-      <button class="nav-btn"        data-nav="factions"    title="Factions">⚑</button>
-      <button class="nav-btn"        data-nav="powers"      title="Power Systems">✦</button>
-      <button class="nav-btn"        data-nav="history"     title="History">📜</button>
-      <button class="nav-btn"        data-nav="prophecies"  title="Prophecies">◉</button>
-      <button class="nav-btn"        data-nav="artifacts"   title="Artifacts">⚗</button>
+      <button class="nav-btn active" data-nav="map"        title="World Map">◈</button>
+      <button class="nav-btn"        data-nav="regions"    title="Regions">⛰</button>
+      <button class="nav-btn"        data-nav="characters" title="Characters">⚔</button>
+      <button class="nav-btn"        data-nav="factions"   title="Factions">⚑</button>
+      <button class="nav-btn"        data-nav="powers"     title="Powers">✦</button>
+      <button class="nav-btn"        data-nav="history"    title="History">📜</button>
+      <button class="nav-btn"        data-nav="prophecies" title="Prophecies">◉</button>
+      <button class="nav-btn"        data-nav="artifacts"  title="Artifacts">⚗</button>
       <div class="nav-sep"></div>
-      <button class="nav-btn"        data-nav="nova"        title="Nova — Civilization Sim">◎</button>
-      <button class="nav-btn"        data-nav="oracle"      title="Oracle AI">☽</button>
+      <button class="nav-btn"        data-nav="nova"       title="Nova — Civilization Sim">◎</button>
+      <button class="nav-btn"        data-nav="dnd"        title="D&D Adventure">⚄</button>
+      <button class="nav-btn"        data-nav="oracle"     title="Oracle Guide">☽</button>
     </nav>
 
-    <!-- Lore entry list panel -->
-    <aside class="content-panel" id="contentPanel">
+    <aside class="content-panel">
       <div class="panel-header">
         <h2 id="panelTitle">World Map</h2>
         <p id="panelSub">Your world at a glance</p>
@@ -103,23 +126,24 @@
       <div class="panel-footer" id="panelFooter"></div>
     </aside>
 
-    <!-- Main view (map or content) -->
-    <main class="main-view" id="mainView">
-      <!-- Map view -->
+    <main class="main-view">
+
+      <!-- MAP -->
       <div id="view-map" class="view active">
         <div class="map-toolbar">
           <span class="map-toolbar-title" id="mapLabel">World Map</span>
           <button class="btn-sm" id="btnSimToggle">◎ Simulate</button>
+          <button class="btn-sm" id="btnDndToggle">⚄ Adventure</button>
           <button class="btn-sm" id="btnExport">↓ Export</button>
+          <button class="btn-sm" id="btnSaveNow">💾 Save</button>
         </div>
         <div class="map-wrap" id="mapWrap">
-          <svg id="worldMap" viewBox="0 0 800 560" xmlns="http://www.w3.org/2000/svg"
-               preserveAspectRatio="xMidYMid meet"></svg>
+          <svg id="worldMap" viewBox="0 0 900 580" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="tooltip" id="tooltip"></div>
         </div>
       </div>
 
-      <!-- Nova simulation view -->
+      <!-- NOVA -->
       <div id="view-nova" class="view">
         <div class="nova-layout">
           <div class="nova-header">
@@ -128,17 +152,12 @@
               <h2 id="novaWorldName">Civilization Simulator</h2>
               <span class="nova-year" id="novaYear">Year 0</span>
             </div>
-            <p class="nova-subtitle">Watch your world's civilizations grow, clash, and change. Intervene to shape history.</p>
+            <p class="nova-subtitle">Watch civilizations grow, clash, and change. The Oracle guides you through critical moments.</p>
           </div>
-
           <div class="nova-body">
-            <!-- Mini map -->
             <div class="nova-map-panel">
-              <svg id="novaMap" viewBox="0 0 400 280" xmlns="http://www.w3.org/2000/svg"
-                   preserveAspectRatio="xMidYMid meet"></svg>
+              <svg id="novaMap" viewBox="0 0 380 260" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
-
-            <!-- Sim log -->
             <div class="nova-log-panel">
               <div class="nova-log-header">
                 <span>Chronicle</span>
@@ -148,50 +167,92 @@
                   <button class="btn-sm" id="btnSimReset">↺ Reset</button>
                 </div>
               </div>
-              <div class="nova-log" id="novaLog"></div>
+              <div class="nova-log" id="novaLog"><div class="nova-empty">Run the simulation to begin the chronicle.</div></div>
             </div>
           </div>
-
-          <!-- Intervention panel -->
+          <!-- Oracle Guide Strip -->
+          <div class="nova-oracle-strip" id="novaOracleStrip" style="display:none">
+            <span class="nova-oracle-icon">☽</span>
+            <span class="nova-oracle-msg" id="novaOracleMsg">The Oracle watches…</span>
+            <button class="btn-sm" id="btnNovaOracleAsk">Consult Oracle</button>
+          </div>
           <div class="nova-intervene">
             <div class="nova-intervene-header">
               <span>⚡ Intervene</span>
               <span class="nova-intervene-hint">Shape the fate of your world</span>
             </div>
-            <div class="nova-intervene-options" id="novaOptions">
-              <!-- Rendered by JS -->
-            </div>
+            <div class="nova-intervene-options" id="novaOptions"></div>
             <div class="nova-intervene-custom">
-              <input id="novaCustomInput" type="text" placeholder="Describe a custom event or intervention…"/>
+              <input id="novaCustomInput" type="text" placeholder="Describe a custom intervention…"/>
               <button class="btn-sm" id="btnNovaCustom">⚡ Apply</button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Oracle chat view -->
+      <!-- D&D ADVENTURE -->
+      <div id="view-dnd" class="view">
+        <div class="dnd-layout">
+          <div class="dnd-header">
+            <div class="dnd-title-row">
+              <span class="dnd-badge">⚄ ADVENTURE</span>
+              <h2 id="dndTitle">The Adventure Begins</h2>
+              <div class="dnd-stats" id="dndStats"></div>
+            </div>
+            <p class="dnd-subtitle">The Oracle is your Dungeon Master — narrating encounters, consequences, and the living world around you.</p>
+          </div>
+          <div class="dnd-body">
+            <div class="dnd-scene-panel">
+              <div class="dnd-scene-header">
+                <span class="dnd-scene-label" id="dndSceneLabel">Awaiting adventure…</span>
+                <div style="display:flex;gap:.4rem">
+                  <span class="dnd-turn-badge" id="dndTurnBadge">Turn 0</span>
+                  <button class="btn-sm" id="btnDndNew">↺ New</button>
+                </div>
+              </div>
+              <div class="dnd-narrative" id="dndNarrative">
+                <div class="dnd-empty">Press <strong>Begin Adventure</strong> to start. The Oracle will weave a story from your world's lore, presenting you with meaningful choices that shape events and feed back into the simulation.</div>
+              </div>
+            </div>
+            <div class="dnd-choices-panel">
+              <div class="dnd-choices-header">What do you do?</div>
+              <div class="dnd-choices" id="dndChoices">
+                <button class="btn-forge dnd-start-btn" id="btnDndStart">⚄ Begin Adventure</button>
+              </div>
+              <div class="dnd-history-header">Adventure Log</div>
+              <div class="dnd-history" id="dndHistory"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ORACLE -->
       <div id="view-oracle" class="view">
         <div class="oracle-layout">
           <aside class="oracle-sidebar">
-            <h3>Quick Prompts</h3>
+            <h3>Guide Prompts</h3>
+            <button class="oracle-prompt-btn" data-q="What should I focus on next to make this world richer?">What's next?</button>
             <button class="oracle-prompt-btn" data-q="What are the major conflicts shaping this world right now?">Major conflicts</button>
             <button class="oracle-prompt-btn" data-q="Which faction is the most powerful and why?">Power balance</button>
             <button class="oracle-prompt-btn" data-q="What hidden forces are at work beneath the surface?">Hidden forces</button>
             <button class="oracle-prompt-btn" data-q="Tell me about the most dangerous region and its secrets.">Dangerous region</button>
-            <button class="oracle-prompt-btn" data-q="How does the power system interact with the political landscape?">Power & politics</button>
             <button class="oracle-prompt-btn" data-q="What ancient history still shapes events today?">Living history</button>
             <button class="oracle-prompt-btn" data-q="Generate a prophecy that ties multiple factions together.">A prophecy</button>
+            <button class="oracle-prompt-btn" data-q="Give me a D&D encounter idea based on the current world state.">D&D encounter</button>
             <div class="sidebar-footer">
               <button class="btn-sm" id="btnClearChat">✕ Clear Chat</button>
             </div>
           </aside>
           <div class="oracle-main">
             <div class="oracle-header">
-              <h2>The Oracle</h2>
-              <p id="oracleSubtitle">Ask anything about your world</p>
+              <div>
+                <h2>The Oracle</h2>
+                <p id="oracleSubtitle">Your guide, narrator, and dungeon master</p>
+              </div>
+              <span class="oracle-mode-badge">Guide Mode</span>
             </div>
             <div class="chat-msgs" id="chatMsgs" role="log">
-              <div class="msg-ai">Forge a world to awaken the Oracle.</div>
+              <div class="msg-ai">Forge a world to awaken the Oracle. I will guide you through creation, simulation, and adventure — ask me anything.</div>
             </div>
             <div class="chat-input-row">
               <input id="chatInput" type="text" placeholder="Ask the Oracle anything…" autocomplete="off"/>
@@ -201,31 +262,43 @@
         </div>
       </div>
 
-      <!-- Lore detail view (regions, characters, etc.) -->
+      <!-- LORE DETAIL -->
       <div id="view-lore" class="view">
         <div class="lore-detail-wrap">
-          <div class="lore-detail-scroll" id="loreDetailScroll">
-            <div class="placeholder-msg">Select an entry from the panel to view its lore.</div>
-          </div>
+          <div class="lore-detail-scroll" id="loreDetailScroll"><div class="placeholder-msg">Select an entry to view its lore.</div></div>
           <div class="lore-detail-footer" id="loreDetailFooter"></div>
         </div>
       </div>
+
     </main>
   </div>
 
-  <!-- ═══ MODAL: REGION DETAIL ═══ -->
-  <div class="modal-overlay" id="regionModal" role="dialog" aria-modal="true">
+  <!-- REGION MODAL -->
+  <div class="modal-overlay" id="regionModal">
     <div class="modal modal-wide">
       <div class="region-modal-header" id="regionModalHeader"></div>
       <div class="region-modal-body" id="regionModalBody"></div>
       <div class="modal-btns">
         <button class="btn-cancel" id="btnRegionClose">Close</button>
         <button class="btn-generate" id="btnRegionOracle">Ask Oracle →</button>
+        <button class="btn-generate btn-dnd-region" id="btnRegionDnd">⚄ Adventure Here</button>
       </div>
     </div>
   </div>
 
-  <!-- ═══ DIAGNOSTICS TOGGLE ═══ -->
+  <!-- D&D RESULT MODAL -->
+  <div class="modal-overlay" id="dndResultModal">
+    <div class="modal dnd-result-modal">
+      <div class="dnd-result-icon" id="dndResultIcon">⚄</div>
+      <h3 id="dndResultTitle">Outcome</h3>
+      <div class="dnd-result-body" id="dndResultBody"></div>
+      <div class="modal-btns">
+        <button class="btn-generate" id="btnDndContinue">Continue the Adventure →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DIAGNOSTICS -->
   <button id="diagToggle"><span class="diag-dot"></span>Diagnostics</button>
   <div id="diagBar">
     <div class="diag-header">

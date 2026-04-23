@@ -113,7 +113,7 @@
       <button class="nav-btn"        data-nav="artifacts"  title="Artifacts">⚗</button>
       <div class="nav-sep"></div>
       <button class="nav-btn"        data-nav="nova"       title="Nova — Civilization Sim">◎</button>
-      <button class="nav-btn"        data-nav="dnd"        title="D&D Adventure">⚄</button>
+      <button class="nav-btn"        data-nav="dnd"        title="Adventure Mode">✦</button>
       <button class="nav-btn"        data-nav="oracle"     title="Oracle Guide">☽</button>
     </nav>
 
@@ -133,7 +133,7 @@
         <div class="map-toolbar">
           <span class="map-toolbar-title" id="mapLabel">World Map</span>
           <button class="btn-sm" id="btnSimToggle">◎ Simulate</button>
-          <button class="btn-sm" id="btnDndToggle">⚄ Adventure</button>
+          <button class="btn-sm" id="btnDndToggle">✦ Adventure</button>
           <button class="btn-sm" id="btnExport">↓ Export</button>
           <button class="btn-sm" id="btnSaveNow">💾 Save</button>
         </div>
@@ -190,39 +190,90 @@
         </div>
       </div>
 
-      <!-- D&D ADVENTURE -->
+      <!-- ADVENTURE MODE -->
       <div id="view-dnd" class="view">
-        <div class="dnd-layout">
-          <div class="dnd-header">
-            <div class="dnd-title-row">
-              <span class="dnd-badge">⚄ ADVENTURE</span>
-              <h2 id="dndTitle">The Adventure Begins</h2>
-              <div class="dnd-stats" id="dndStats"></div>
-            </div>
-            <p class="dnd-subtitle">The Oracle is your Dungeon Master — narrating encounters, consequences, and the living world around you.</p>
-          </div>
-          <div class="dnd-body">
-            <div class="dnd-scene-panel">
-              <div class="dnd-scene-header">
-                <span class="dnd-scene-label" id="dndSceneLabel">Awaiting adventure…</span>
-                <div style="display:flex;gap:.4rem">
-                  <span class="dnd-turn-badge" id="dndTurnBadge">Turn 0</span>
-                  <button class="btn-sm" id="btnDndNew">↺ New</button>
+        <div class="adv-layout">
+
+          <!-- CHARACTER SETUP (shown before adventure starts) -->
+          <div class="adv-setup" id="advSetup">
+            <div class="adv-setup-inner">
+              <div class="adv-setup-title">
+                <span class="adv-badge">✦ ADVENTURE</span>
+                <h2>Who are you?</h2>
+                <p>Your origin and allegiance shape everything — how people see you, what doors open, what enemies you make.</p>
+              </div>
+
+              <div class="adv-setup-fields">
+                <div class="adv-setup-section">
+                  <label class="adv-setup-label">Your Faction</label>
+                  <p class="adv-setup-hint">The faction you were born into, serve, or have sworn to. This determines your starting allies, enemies, and reputation.</p>
+                  <div class="adv-faction-grid" id="advFactionGrid">
+                    <!-- Rendered from world factions -->
+                  </div>
+                </div>
+
+                <div class="adv-setup-section">
+                  <label class="adv-setup-label">Your Origin Region</label>
+                  <p class="adv-setup-hint">Where you grew up. The place whose culture, climate, and secrets shaped who you are.</p>
+                  <div class="adv-region-grid" id="advRegionGrid">
+                    <!-- Rendered from world regions -->
+                  </div>
+                </div>
+
+                <div class="adv-setup-section">
+                  <label class="adv-setup-label">Your Name & Background</label>
+                  <p class="adv-setup-hint">Optional — leave blank and the Oracle will name you based on your faction's culture.</p>
+                  <input id="advPlayerName" type="text" class="adv-name-input" placeholder="Your character's name (optional)…"/>
+                  <textarea id="advPlayerBg" class="adv-bg-input" placeholder="Any personal detail — a scar, a debt, a mission, a secret… (optional)"></textarea>
                 </div>
               </div>
-              <div class="dnd-narrative" id="dndNarrative">
-                <div class="dnd-empty">Press <strong>Begin Adventure</strong> to start. The Oracle will weave a story from your world's lore, presenting you with meaningful choices that shape events and feed back into the simulation.</div>
-              </div>
-            </div>
-            <div class="dnd-choices-panel">
-              <div class="dnd-choices-header">What do you do?</div>
-              <div class="dnd-choices" id="dndChoices">
-                <button class="btn-forge dnd-start-btn" id="btnDndStart">⚄ Begin Adventure</button>
-              </div>
-              <div class="dnd-history-header">Adventure Log</div>
-              <div class="dnd-history" id="dndHistory"></div>
+
+              <button class="btn-forge adv-begin-btn" id="btnAdvBegin">✦ Begin Your Story</button>
             </div>
           </div>
+
+          <!-- ADVENTURE IN PROGRESS (hidden until started) -->
+          <div class="adv-game" id="advGame" style="display:none">
+            <div class="adv-game-inner">
+
+              <!-- Left: Narrative -->
+              <div class="adv-narrative-panel">
+                <div class="adv-game-header">
+                  <div class="adv-game-header-left">
+                    <span class="adv-badge">✦ ADVENTURE</span>
+                    <span class="adv-scene-label" id="advSceneLabel">The story unfolds…</span>
+                  </div>
+                  <div class="adv-game-header-right">
+                    <span class="adv-chapter-badge" id="advChapterBadge">Chapter 1</span>
+                    <button class="btn-sm" id="btnAdvRestart">↺ New Story</button>
+                  </div>
+                </div>
+
+                <div class="adv-narrative" id="advNarrative">
+                  <div class="adv-loading">The Oracle weaves your fate…</div>
+                </div>
+              </div>
+
+              <!-- Right: Choices + Log -->
+              <div class="adv-choices-panel">
+                <div class="adv-character-card" id="advCharacterCard">
+                  <!-- Name, faction, origin — rendered by JS -->
+                </div>
+
+                <div class="adv-standing-bars" id="advStandingBars">
+                  <!-- Faction standing bars — rendered by JS -->
+                </div>
+
+                <div class="adv-choices-header">What do you do?</div>
+                <div class="adv-choices" id="advChoices"></div>
+
+                <div class="adv-log-header">Your Journey</div>
+                <div class="adv-log" id="advLog"></div>
+              </div>
+
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -231,16 +282,17 @@
         <div class="oracle-layout">
           <aside class="oracle-sidebar">
             <h3>Guide Prompts</h3>
-            <button class="oracle-prompt-btn" data-q="What should I focus on next to make this world richer?">What's next?</button>
+            <button class="oracle-prompt-btn" data-q="What should I focus on next to make this world richer and more interesting?">What's next?</button>
             <button class="oracle-prompt-btn" data-q="What are the major conflicts shaping this world right now?">Major conflicts</button>
             <button class="oracle-prompt-btn" data-q="Which faction is the most powerful and why?">Power balance</button>
-            <button class="oracle-prompt-btn" data-q="What hidden forces are at work beneath the surface?">Hidden forces</button>
+            <button class="oracle-prompt-btn" data-q="What hidden forces are at work beneath the surface of this world?">Hidden forces</button>
             <button class="oracle-prompt-btn" data-q="Tell me about the most dangerous region and its secrets.">Dangerous region</button>
-            <button class="oracle-prompt-btn" data-q="What ancient history still shapes events today?">Living history</button>
+            <button class="oracle-prompt-btn" data-q="What ancient history still shapes events and politics today?">Living history</button>
             <button class="oracle-prompt-btn" data-q="Generate a prophecy that ties multiple factions together.">A prophecy</button>
-            <button class="oracle-prompt-btn" data-q="Give me a D&D encounter idea based on the current world state.">D&D encounter</button>
+            <button class="oracle-prompt-btn" data-q="What contradictions or weak points exist in this world's lore that I should address?">Weak points</button>
             <div class="sidebar-footer">
-              <button class="btn-sm" id="btnClearChat">✕ Clear Chat</button>
+              <button class="btn-sm oracle-suggest-btn" id="btnOracleSuggest">✦ Suggest Addition</button>
+              <button class="btn-sm" id="btnClearChat">✕ Clear</button>
             </div>
           </aside>
           <div class="oracle-main">
@@ -283,19 +335,7 @@
       <div class="modal-btns">
         <button class="btn-cancel" id="btnRegionClose">Close</button>
         <button class="btn-generate" id="btnRegionOracle">Ask Oracle →</button>
-        <button class="btn-generate btn-dnd-region" id="btnRegionDnd">⚄ Adventure Here</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- D&D RESULT MODAL -->
-  <div class="modal-overlay" id="dndResultModal">
-    <div class="modal dnd-result-modal">
-      <div class="dnd-result-icon" id="dndResultIcon">⚄</div>
-      <h3 id="dndResultTitle">Outcome</h3>
-      <div class="dnd-result-body" id="dndResultBody"></div>
-      <div class="modal-btns">
-        <button class="btn-generate" id="btnDndContinue">Continue the Adventure →</button>
+        <button class="btn-generate btn-adv-region" id="btnRegionDnd">✦ Start Adventure Here</button>
       </div>
     </div>
   </div>

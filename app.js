@@ -133,7 +133,10 @@ function setNav(navId) {
   switch(navId) {
     case 'map':    updatePanelMap(); break;
     case 'nova':   updatePanelNova(); break;
-    case 'dnd':    updatePanelDnd(); break;
+    case 'dnd':
+      if (!AppState.adventure.active) showAdventureSetup();
+      updatePanelAdventure();
+      break;
     case 'oracle': updatePanelOracle(); break;
     default:       updatePanelCategory(navId);
   }
@@ -182,24 +185,6 @@ function updatePanelNova() {
   </div>`;
   $('panelFooter').innerHTML=`<button class="btn-add" id="btnExportTimeline">↓ Export Timeline</button>`;
   $('btnExportTimeline').addEventListener('click',exportTimeline);
-}
-
-function updatePanelDnd() {
-  $('panelTitle').textContent='D&D Adventure';
-  $('panelSub').textContent=`Turn ${AppState.dnd.turn}`;
-  const dnd=AppState.dnd;
-  $('panelScroll').innerHTML=`<div style="padding:.65rem 1rem">
-    <div style="font-family:var(--fd);font-size:.58rem;letter-spacing:.15em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.5rem">Player Stats</div>
-    ${['reputation','power','knowledge'].map(stat=>`
-      <div style="margin-bottom:.55rem">
-        <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--parch-dim);margin-bottom:.2rem"><span>${stat.charAt(0).toUpperCase()+stat.slice(1)}</span><span>${dnd.playerStats[stat]}</span></div>
-        <div style="height:4px;background:var(--bord-f);border-radius:2px">
-          <div style="height:100%;width:${dnd.playerStats[stat]}%;background:var(--dnd);border-radius:2px;transition:width .5s"></div>
-        </div>
-      </div>`).join('')}
-    ${dnd.focusRegion?`<div style="margin-top:.85rem;font-family:var(--fd);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.25rem">Current Location</div><div style="font-size:.8rem;color:var(--parch-dim)">${esc(dnd.focusRegion)}</div>`:''}
-  </div>`;
-  $('panelFooter').innerHTML='';
 }
 
 function updatePanelOracle() {
@@ -966,7 +951,7 @@ function initWorld() {
   renderMap();
   renderMiniMapView();
   renderNovaInterventions();
-  resetDnd();
+  resetAdventure();
   showScreen('main');
   setNav('map');
   setTimeout(() => runScan(false), 800);
@@ -1011,7 +996,26 @@ function openRegionModal(regionName) {
   }
   $('regionModalBody').innerHTML=body;
   $('btnRegionOracle').onclick=()=>{closeModal('regionModal');oracleAbout(region.name);};
-  $('btnRegionDnd').onclick=()=>{closeModal('regionModal');startDndInRegion(region.name);};
+  $('btnRegionDnd').onclick=()=>{
+    closeModal('regionModal');
+    // Pre-select this region as origin and navigate to adventure setup
+    AppState.adventure.playerOrigin  = region;
+    AppState.adventure.currentRegion = region.name;
+    setNav('dnd');
+    // Auto-highlight this region in the setup grid
+    setTimeout(()=>{
+      const grid=$('advRegionGrid');
+      if(grid){
+        const cards=grid.querySelectorAll('.adv-select-card');
+        cards.forEach(c=>{
+          if(c.querySelector('.adv-card-name')?.textContent===region.name){
+            cards.forEach(x=>x.classList.remove('selected'));
+            c.classList.add('selected');
+          }
+        });
+      }
+    },100);
+  };
   $('btnRegionClose').onclick=()=>closeModal('regionModal');
   openModal('regionModal');
 }
@@ -1199,174 +1203,383 @@ function exportTimeline() {
 }
 
 /* ════════════════════════════════════════════════
-   D&D ADVENTURE MODE
+   ADVENTURE MODE v2 — lore-grounded choose-your-story
 ════════════════════════════════════════════════ */
-function resetDnd() {
-  AppState.dnd={turn:0,active:false,history:[],currentScene:null,currentChoices:[],focusRegion:null,playerStats:{reputation:50,power:10,knowledge:5}};
-  $('dndNarrative').innerHTML='<div class="dnd-empty">Press <strong>Begin Adventure</strong> to start. The Oracle will weave a story from your world\'s lore, presenting meaningful choices that shape events and feed back into the simulation.</div>';
-  $('dndChoices').innerHTML='<button class="btn-forge dnd-start-btn" id="btnDndStart">⚄ Begin Adventure</button>';
-  $('dndHistory').innerHTML='';
-  $('dndTurnBadge').textContent='Turn 0';
-  $('dndTitle').textContent='The Adventure Begins';
-  $('dndSceneLabel').textContent='Awaiting adventure…';
-  $('dndStats').innerHTML='';
-  $('btnDndStart').addEventListener('click',beginDnd);
-}
 
-async function beginDnd(focusRegion) {
-  if(!hasWorld()){showToast('Forge a world first.');return;}
-  const W=AppState.world;
-  const region=focusRegion||AppState.dnd.focusRegion||(W.regions||[])[0]?.name||'the realm';
-  AppState.dnd.focusRegion=region;
-  AppState.dnd.active=true;
-  AppState.dnd.turn=1;
-  await generateDndScene(`Begin a new adventure. The player starts in ${region}.`,'adventure_start');
-}
+/**
+ * Show the adventure setup screen — faction and origin selection.
+ * Called when the user navigates to the adventure view.
+ */
+function showAdventureSetup() {
+  const W = AppState.world;
+  if (!W) return;
 
-function startDndInRegion(regionName) {
-  AppState.dnd.focusRegion=regionName;
-  setNav('dnd');
-  beginDnd(regionName);
-}
+  // Show setup, hide game
+  $('advSetup').style.display = 'flex';
+  $('advGame').style.display  = 'none';
 
-async function generateDndScene(context,sceneType) {
-  const W=AppState.world,dnd=AppState.dnd;
-  $('dndNarrative').innerHTML='<div class="msg-typing" style="padding:1rem;color:var(--faint);font-style:italic">The Oracle weaves your fate…</div>';
-  $('dndChoices').innerHTML='';
-  $('dndTurnBadge').textContent=`Turn ${dnd.turn}`;
+  // Render faction choices from world data
+  const factions = W.factions || [];
+  const factionGrid = $('advFactionGrid');
+  if (factionGrid) {
+    if (!factions.length) {
+      factionGrid.innerHTML = '<div class="adv-empty-note">No factions defined yet. Add factions in the lore panel first.</div>';
+    } else {
+      factionGrid.innerHTML = factions.map((f, i) => `
+        <div class="adv-select-card" data-type="faction" data-idx="${i}">
+          <div class="adv-card-name">${esc(f.name)}</div>
+          <div class="adv-card-sub">${esc(f.type || '')}</div>
+          <div class="adv-card-desc">${esc((f.motivation || '').slice(0, 100))}</div>
+        </div>`).join('');
 
-  const histSummary=dnd.history.slice(-3).map(h=>`Turn ${h.turn}: Player chose "${h.choice}" — ${h.outcome}`).join(' | ');
-  const statsStr=`Reputation:${dnd.playerStats.reputation}, Power:${dnd.playerStats.power}, Knowledge:${dnd.playerStats.knowledge}`;
-
-  try {
-    const raw=await callApi(
-      `You are the Dungeon Master for "${W.worldName}" (${W.genre}). Context: ${buildWorldContext()}
-Current region: ${dnd.focusRegion}. Player stats: ${statsStr}. Turn: ${dnd.turn}.
-Recent history: ${histSummary||'Adventure just began.'}.
-Scene context: ${context}.
-
-Generate a vivid narrative scene and 3-4 meaningful choices for the player.
-Return ONLY JSON:
-{
-  "title": "Short scene title",
-  "narrative": "2-4 paragraphs of atmospheric narrative. Rich, specific, drawing on world lore.",
-  "choices": [
-    {"id":"a","text":"Choice description (action-focused, 1-2 sentences)","type":"normal|danger|wisdom"},
-    {"id":"b","text":"...","type":"normal"},
-    {"id":"c","text":"...","type":"danger"},
-    {"id":"d","text":"...","type":"wisdom"}
-  ],
-  "statEffects": {"reputation":0,"power":0,"knowledge":0}
-}`,
-      {maxTokens:900}
-    );
-
-    const scene=parseJsonResponse(raw);
-    dnd.currentScene=scene;
-    dnd.currentChoices=scene.choices||[];
-
-    $('dndTitle').textContent=scene.title||'The Adventure';
-    $('dndSceneLabel').textContent=`${esc(dnd.focusRegion)} · Turn ${dnd.turn}`;
-    $('dndNarrative').innerHTML=scene.narrative
-      ?scene.narrative.split('\n').filter(p=>p.trim()).map(p=>`<p>${esc(p)}</p>`).join('')
-      :'<div class="dnd-empty">The Oracle is silent.</div>';
-
-    $('dndChoices').innerHTML=scene.choices?.map(c=>`
-      <button class="dnd-choice-btn${c.type==='danger'?' danger':''}" data-choice-id="${esc(c.id)}">
-        ${c.type==='wisdom'?'💡 ':c.type==='danger'?'⚠ ':'→ '}${esc(c.text)}
-      </button>`).join('')||'';
-
-    $('dndChoices').querySelectorAll('.dnd-choice-btn').forEach(btn=>{
-      btn.addEventListener('click',()=>makeDndChoice(btn.dataset.choiceId));
-    });
-
-    // Update stats display
-    updateDndStats();
-
-  } catch(err) {
-    $('dndNarrative').innerHTML=`<div class="dnd-empty">The Oracle's vision clouds. ${esc(err.message)}</div>`;
-    recordDiagError('dnd',err.message);
-  }
-}
-
-async function makeDndChoice(choiceId) {
-  const dnd=AppState.dnd;
-  const choice=dnd.currentChoices.find(c=>c.id===choiceId); if(!choice) return;
-  dnd.turn++;
-
-  // Log to history
-  dnd.history.push({turn:dnd.turn-1,choice:choice.text,outcome:'…resolving…'});
-
-  // Resolve the choice
-  try {
-    const raw=await callApi(
-      `World "${AppState.world.worldName}". Player in ${dnd.focusRegion} chose: "${choice.text}"
-Context: ${buildWorldContext()}
-Player stats: Rep:${dnd.playerStats.reputation} Pwr:${dnd.playerStats.power} Know:${dnd.playerStats.knowledge}
-Resolve this choice with consequences. Return ONLY JSON:
-{
-  "outcome": "2-3 sentence description of immediate consequence",
-  "resultType": "success|failure|partial|revelation",
-  "statChanges": {"reputation":5,"power":-2,"knowledge":3},
-  "worldImpact": {"type":"conflict|alliance|discovery|neutral","text":"1 sentence world event if any","regionName":"affected region name if any"},
-  "nextContext": "1 sentence setting up the next scene"
-}`,
-      {maxTokens:400}
-    );
-
-    const result=parseJsonResponse(raw);
-
-    // Apply stat changes
-    if(result.statChanges) {
-      Object.entries(result.statChanges).forEach(([k,v])=>{
-        if(dnd.playerStats[k]!==undefined) dnd.playerStats[k]=Math.max(0,Math.min(100,dnd.playerStats[k]+v));
+      factionGrid.querySelectorAll('.adv-select-card').forEach(card => {
+        card.addEventListener('click', () => {
+          factionGrid.querySelectorAll('.adv-select-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          AppState.adventure.playerFaction = factions[parseInt(card.dataset.idx, 10)];
+        });
       });
     }
+  }
 
-    // Update history
-    dnd.history[dnd.history.length-1].outcome=result.outcome||'The choice was made.';
+  // Render region choices from world data
+  const regions = W.regions || [];
+  const regionGrid = $('advRegionGrid');
+  if (regionGrid) {
+    if (!regions.length) {
+      regionGrid.innerHTML = '<div class="adv-empty-note">No regions defined yet.</div>';
+    } else {
+      regionGrid.innerHTML = regions.map((r, i) => `
+        <div class="adv-select-card" data-type="region" data-idx="${i}" style="border-left: 3px solid ${r.color || '#4a6a8a'}">
+          <div class="adv-card-name">${esc(r.name)}</div>
+          <div class="adv-card-sub">${esc(r.type || '')}</div>
+          <div class="adv-card-desc">${esc((r.description || '').slice(0, 100))}</div>
+        </div>`).join('');
 
-    // Feed world impact into Nova
-    if(result.worldImpact?.text) {
-      const nova=AppState.nova;
-      nova.year+=Math.floor(1+Math.random()*3);
-      nova.events.push({year:nova.year,text:`[D&D] ${result.worldImpact.text}`,type:result.worldImpact.type||'dnd'});
-      if(result.worldImpact.regionName&&nova.regionState[result.worldImpact.regionName]) {
-        const delta=result.resultType==='success'?8:result.resultType==='failure'?-8:3;
-        nova.regionState[result.worldImpact.regionName].stability=Math.max(5,Math.min(100,nova.regionState[result.worldImpact.regionName].stability+delta));
-      }
-      renderMiniMapView(); renderMap();
+      regionGrid.querySelectorAll('.adv-select-card').forEach(card => {
+        card.addEventListener('click', () => {
+          regionGrid.querySelectorAll('.adv-select-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          AppState.adventure.playerOrigin  = regions[parseInt(card.dataset.idx, 10)];
+          AppState.adventure.currentRegion = regions[parseInt(card.dataset.idx, 10)].name;
+        });
+      });
     }
-
-    // Show result modal
-    const icons={success:'✦',failure:'✕',partial:'◈',revelation:'☽'};
-    $('dndResultIcon').textContent=icons[result.resultType]||'⚄';
-    $('dndResultTitle').textContent=result.resultType?.charAt(0).toUpperCase()+result.resultType?.slice(1)||'Outcome';
-    $('dndResultBody').innerHTML=`<p>${esc(result.outcome||'')}</p>`;
-    $('btnDndContinue').onclick=()=>{
-      closeModal('dndResultModal');
-      // Add to history log
-      const logEl=$('dndHistory');
-      const entry=document.createElement('div'); entry.className='dnd-history-entry';
-      entry.innerHTML=`<div class="dnd-he-turn">Turn ${dnd.turn-1}</div>${esc(choice.text)}`;
-      logEl.appendChild(entry); logEl.scrollTop=logEl.scrollHeight;
-      // Continue adventure
-      generateDndScene(result.nextContext||'Continue the adventure.',result.resultType);
-    };
-    openModal('dndResultModal');
-    updateDndStats();
-    saveCurrentWorld();
-
-  } catch(err) {
-    recordDiagError('dnd_choice',err.message);
-    showToast('Choice resolution failed — try again.');
   }
 }
 
-function updateDndStats() {
-  const dnd=AppState.dnd;
-  $('dndStats').innerHTML=['reputation','power','knowledge'].map(s=>`<span class="dnd-stat-badge">${s.slice(0,3).toUpperCase()} ${dnd.playerStats[s]}</span>`).join('');
-  updatePanelDnd();
+/** Reset adventure to setup state */
+function resetAdventure() {
+  AppState.adventure = {
+    active:          false,
+    chapter:         0,
+    playerName:      '',
+    playerFaction:   null,
+    playerOrigin:    null,
+    playerBg:        '',
+    factionStanding: {},
+    currentRegion:   null,
+    history:         [],
+    currentChoices:  [],
+    worldImpacts:    [],
+  };
+  $('advSetup').style.display = 'flex';
+  $('advGame').style.display  = 'none';
+  showAdventureSetup();
+}
+
+/** Begin the adventure after setup is complete */
+async function beginAdventure() {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  if (!adv.playerFaction) { showToast('Choose your faction first.'); return; }
+  if (!adv.playerOrigin)  { showToast('Choose your origin region first.'); return; }
+
+  // Collect name and background
+  adv.playerName = $('advPlayerName')?.value.trim() || '';
+  adv.playerBg   = $('advPlayerBg')?.value.trim()   || '';
+  adv.active     = true;
+  adv.chapter    = 1;
+
+  // Initialize faction standings — start neutral with all, slightly positive with own faction
+  adv.factionStanding = {};
+  (W.factions || []).forEach(f => {
+    adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
+  });
+
+  // Switch to game view
+  $('advSetup').style.display = 'none';
+  $('advGame').style.display  = 'flex';
+
+  renderAdventureCharacterCard();
+  renderFactionStandings();
+
+  // Generate opening scene
+  await generateAdventureScene('OPENING', null);
+}
+
+/** Render the character identity card */
+function renderAdventureCharacterCard() {
+  const adv = AppState.adventure;
+  const card = $('advCharacterCard');
+  if (!card) return;
+  card.innerHTML = `
+    <div class="adv-char-name">${esc(adv.playerName || 'The Wanderer')}</div>
+    <div class="adv-char-line">
+      <span class="adv-char-faction" style="border-color:var(--gold)">
+        ${esc(adv.playerFaction?.name || '—')}
+      </span>
+      <span class="adv-char-origin">from ${esc(adv.playerOrigin?.name || '—')}</span>
+    </div>
+    ${adv.playerBg ? `<div class="adv-char-bg">${esc(adv.playerBg)}</div>` : ''}`;
+}
+
+/** Render faction standing bars */
+function renderFactionStandings() {
+  const adv = AppState.adventure;
+  const container = $('advStandingBars');
+  if (!container) return;
+
+  const standings = Object.entries(adv.factionStanding);
+  if (!standings.length) { container.innerHTML = ''; return; }
+
+  container.innerHTML = `
+    <div class="adv-standing-title">Faction Relations</div>
+    ${standings.map(([name, val]) => {
+      const pct   = Math.round((val + 100) / 2); // -100..100 → 0..100%
+      const color = val > 30 ? 'var(--ok)' : val < -30 ? 'var(--err)' : 'var(--gold-dim)';
+      const label = val > 50 ? 'Ally' : val > 20 ? 'Friendly' : val > -20 ? 'Neutral' : val > -50 ? 'Hostile' : 'Enemy';
+      return `
+        <div class="adv-standing-row">
+          <span class="adv-standing-name">${esc(name.slice(0, 18))}</span>
+          <div class="adv-standing-bar-wrap">
+            <div class="adv-standing-bar" style="width:${pct}%;background:${color}"></div>
+          </div>
+          <span class="adv-standing-label" style="color:${color}">${label}</span>
+        </div>`;
+    }).join('')}`;
+}
+
+/**
+ * Core scene generator — builds rich, lore-specific narrative.
+ * sceneType: 'OPENING' | 'CONTINUATION' | 'CONSEQUENCE'
+ * prevChoice: the choice text that led to this scene (null for opening)
+ */
+async function generateAdventureScene(sceneType, prevChoice) {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  // Show loading state
+  $('advNarrative').innerHTML = '<div class="adv-loading">The Oracle weaves your fate…</div>';
+  $('advChoices').innerHTML   = '';
+  $('advChapterBadge').textContent = `Chapter ${adv.chapter}`;
+  $('advSceneLabel').textContent   = adv.currentRegion || adv.playerOrigin?.name || W.worldName;
+
+  // Build the player context string
+  const playerCtx = [
+    `Name: ${adv.playerName || 'unknown'}`,
+    `Faction: ${adv.playerFaction?.name} (${adv.playerFaction?.type || ''})`,
+    `Origin: ${adv.playerOrigin?.name} (${adv.playerOrigin?.type || ''})`,
+    `Currently in: ${adv.currentRegion || adv.playerOrigin?.name}`,
+    adv.playerBg ? `Background: ${adv.playerBg}` : '',
+  ].filter(Boolean).join('. ');
+
+  // Faction standing summary
+  const standingCtx = Object.entries(adv.factionStanding)
+    .map(([n, v]) => `${n}: ${v > 0 ? '+' : ''}${v}`)
+    .join(', ');
+
+  // Recent history (last 3 chapters)
+  const historyCtx = adv.history.slice(-3)
+    .map(h => `Chapter ${h.chapter}: "${h.choiceText}" → ${h.outcome}`)
+    .join(' | ');
+
+  // Nova world state (compound what's happened in simulation)
+  const simState = AppState.nova.events.length
+    ? `The world is currently at Year ${AppState.nova.year}. Recent events: ${AppState.nova.events.slice(-3).map(e => e.text).join(' | ')}.`
+    : '';
+
+  // Scene-type-specific instruction
+  const sceneInstruction = {
+    OPENING:      `Write the opening scene. The player is ${adv.playerName || 'a traveler'} from ${adv.playerOrigin?.name}, a member of ${adv.playerFaction?.name}. Begin in medias res — something is already happening. Ground the scene in specific lore details from the world.`,
+    CONTINUATION: `Continue the story. The player just chose: "${prevChoice}". Generate the next scene flowing naturally from that choice and its consequences.`,
+    CONSEQUENCE:  `The player made a significant choice. Show the immediate aftermath before moving the story forward.`,
+  }[sceneType] || 'Continue the story.';
+
+  try {
+    const raw = await callApi(
+      `You are a masterful narrator for the world of "${W.worldName}" (${W.genre}).
+
+WORLD LORE: ${buildWorldContext()}
+${simState}
+
+PLAYER: ${playerCtx}
+FACTION RELATIONS: ${standingCtx}
+STORY HISTORY: ${historyCtx || 'This is the beginning.'}
+
+SCENE TYPE: ${sceneInstruction}
+
+CRITICAL RULES:
+- Every scene must reference at least one SPECIFIC named element from the world lore (a real faction name, region name, character name, or power system detail)
+- Choices must be grounded in the world — not generic fantasy tropes
+- The player's faction background should affect how NPCs treat them
+- Keep narrative to 3-4 rich paragraphs — not too short, not too long
+- Choices should have real political/social consequences in this world
+
+Return ONLY valid JSON:
+{
+  "sceneTitle": "Short evocative title for this scene",
+  "narrative": "3-4 paragraphs separated by \\n\\n. Rich, specific, atmospheric. References real world lore.",
+  "location": "Current region or place name",
+  "choices": [
+    {"id":"a","text":"Specific action grounded in this world (1-2 sentences)","consequence":"hint at what kind of consequence","affectsFaction":"faction name or null","standingChange":10},
+    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0},
+    {"id":"c","text":"...","consequence":"...","affectsFaction":"faction name or null","standingChange":-8},
+    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0}
+  ],
+  "worldPulse": "One sentence about something happening in the wider world right now (optional, leave empty string if nothing relevant)"
+}`,
+      { maxTokens: 1100 }
+    );
+
+    const scene = parseJsonResponse(raw);
+
+    // Update location
+    if (scene.location) adv.currentRegion = scene.location;
+    adv.currentChoices = scene.choices || [];
+
+    // Render narrative
+    const narHtml = (scene.narrative || '')
+      .split('\n\n')
+      .filter(p => p.trim())
+      .map(p => `<p>${addCitationLinks(p, W)}</p>`)
+      .join('');
+
+    $('advNarrative').innerHTML = narHtml || '<div class="adv-empty">The Oracle is silent.</div>';
+    $('advSceneLabel').textContent = scene.sceneTitle || adv.currentRegion || W.worldName;
+
+    // Render choices
+    $('advChoices').innerHTML = (scene.choices || []).map(c => {
+      const hasEffect = c.affectsFaction && c.standingChange !== 0;
+      const sign      = c.standingChange > 0 ? '+' : '';
+      const effectTip = hasEffect ? ` · ${c.affectsFaction} ${sign}${c.standingChange}` : '';
+      return `
+        <button class="adv-choice-btn" data-choice-id="${esc(c.id)}">
+          <span class="adv-choice-text">→ ${esc(c.text)}</span>
+          ${c.consequence ? `<span class="adv-choice-hint">${esc(c.consequence)}${effectTip}</span>` : ''}
+        </button>`;
+    }).join('');
+
+    $('advChoices').querySelectorAll('.adv-choice-btn').forEach(btn => {
+      btn.addEventListener('click', () => makeAdventureChoice(btn.dataset.choiceId));
+    });
+
+    // World pulse feeds into Nova
+    if (scene.worldPulse) {
+      const nova = AppState.nova;
+      nova.year += Math.floor(1 + Math.random() * 4);
+      nova.events.push({ year: nova.year, text: `[Adventure] ${scene.worldPulse}`, type: 'discovery' });
+      renderMiniMapView();
+    }
+
+    updatePanelAdventure();
+
+  } catch (err) {
+    $('advNarrative').innerHTML = `<div class="adv-empty">The Oracle's vision clouds — ${esc(err.message)}<br><br><button class="btn-sm" onclick="generateAdventureScene('${sceneType}',null)">↺ Try again</button></div>`;
+    recordDiagError('adventure', err.message);
+  }
+}
+
+/** Player makes a choice — resolve consequence then generate next scene */
+async function makeAdventureChoice(choiceId) {
+  const adv    = AppState.adventure;
+  const choice = adv.currentChoices.find(c => c.id === choiceId);
+  if (!choice) return;
+
+  adv.chapter++;
+
+  // Apply faction standing change
+  if (choice.affectsFaction && choice.standingChange !== 0) {
+    const current = adv.factionStanding[choice.affectsFaction] ?? 0;
+    adv.factionStanding[choice.affectsFaction] = Math.max(-100, Math.min(100, current + choice.standingChange));
+  }
+
+  // Log to journey
+  adv.history.push({
+    chapter:    adv.chapter - 1,
+    sceneTitle: $('advSceneLabel')?.textContent || '',
+    choiceText: choice.text,
+    outcome:    '…',
+  });
+
+  // Add to visible log
+  const logEl = $('advLog');
+  if (logEl) {
+    const entry = document.createElement('div');
+    entry.className = 'adv-log-entry';
+    entry.innerHTML = `
+      <div class="adv-log-chapter">Chapter ${adv.chapter - 1}</div>
+      <div class="adv-log-choice">→ ${esc(choice.text)}</div>`;
+    logEl.appendChild(entry);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  renderFactionStandings();
+  saveCurrentWorld();
+
+  // Show choice was selected, brief moment before next scene
+  $('advChoices').querySelectorAll('.adv-choice-btn').forEach(btn => {
+    btn.disabled = true;
+    if (btn.dataset.choiceId === choiceId) btn.classList.add('selected');
+  });
+
+  await new Promise(r => setTimeout(r, 600));
+  await generateAdventureScene('CONTINUATION', choice.text);
+}
+
+/** Panel content for adventure mode */
+function updatePanelAdventure() {
+  const adv = AppState.adventure;
+  $('panelTitle').textContent = 'Adventure';
+  $('panelSub').textContent   = `Chapter ${adv.chapter}`;
+
+  if (!adv.active) {
+    $('panelScroll').innerHTML = '<div class="placeholder-msg">Set up your character to begin.</div>';
+    $('panelFooter').innerHTML = '';
+    return;
+  }
+
+  const standings = Object.entries(adv.factionStanding);
+  $('panelScroll').innerHTML = `
+    <div style="padding:.65rem 1rem">
+      <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Character</div>
+      <div style="font-size:.85rem;color:var(--parch-dim);margin-bottom:.2rem">${esc(adv.playerName || 'The Wanderer')}</div>
+      <div style="font-size:.75rem;color:var(--faint);font-style:italic;margin-bottom:.85rem">${esc(adv.playerFaction?.name || '')} · ${esc(adv.playerOrigin?.name || '')}</div>
+
+      <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Location</div>
+      <div style="font-size:.82rem;color:var(--parch-dim);margin-bottom:.85rem">${esc(adv.currentRegion || '—')}</div>
+
+      ${standings.length ? `
+        <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Relations</div>
+        ${standings.map(([name, val]) => {
+          const color = val > 20 ? 'var(--ok)' : val < -20 ? 'var(--err)' : 'var(--gold-dim)';
+          return `<div style="display:flex;justify-content:space-between;font-size:.72rem;color:${color};margin-bottom:.2rem"><span>${esc(name.slice(0,16))}</span><span>${val > 0 ? '+' : ''}${val}</span></div>`;
+        }).join('')}
+      ` : ''}
+    </div>`;
+
+  $('panelFooter').innerHTML = `
+    <button class="btn-add" id="btnAdvOracle">☽ Ask Oracle about my story</button>`;
+  $('btnAdvOracle')?.addEventListener('click', () => {
+    const recent = adv.history.slice(-1)[0];
+    const q = recent
+      ? `I'm playing as ${adv.playerName || 'a traveler'} from ${adv.playerFaction?.name}. I just chose "${recent.choiceText}". What might happen next in ${adv.currentRegion}?`
+      : `I'm playing as ${adv.playerName || 'a traveler'} from ${adv.playerFaction?.name}, starting in ${adv.playerOrigin?.name}. What should I expect?`;
+    $('chatInput').value = q;
+    setNav('oracle');
+    sendChat();
+  });
 }
 
 /* ════════════════════════════════════════════════
@@ -1800,14 +2013,46 @@ function bindEvents() {
   $('btnNovaCustom').addEventListener('click',applyCustomIntervention);
   $('novaCustomInput').addEventListener('keydown',e=>{if(e.key==='Enter')applyCustomIntervention();});
 
-  // D&D
-  $('btnDndNew').addEventListener('click',()=>{resetDnd();setNav('dnd');});
-  $('btnDndStart').addEventListener('click',()=>beginDnd());
+  // Adventure Mode
+  $('btnDndToggle').addEventListener('click', () => setNav('dnd'));
+  $('btnAdvBegin')?.addEventListener('click', beginAdventure);
+  $('btnAdvRestart')?.addEventListener('click', () => { resetAdventure(); setNav('dnd'); });
 
   // Oracle
   $('chatSendBtn').addEventListener('click',sendChat);
   $('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}});
-  $('btnClearChat').addEventListener('click',clearChat);
+  $('btnClearChat').addEventListener('click', clearChat);
+
+  // Oracle "Suggest something to add" — triggers a proposal on demand
+  $('btnOracleSuggest')?.addEventListener('click', async () => {
+    if (!hasWorld()) { showToast('Forge a world first.'); return; }
+    const btn = $('btnOracleSuggest');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const W   = AppState.world;
+      const raw = await callApi(
+        `You are the Oracle for "${W.worldName}". Analyze the current world and suggest ONE new lore entry that would meaningfully enrich it.
+Context: ${buildWorldContext()}
+Pick the category where the world feels most incomplete or where a new entry would create interesting tension.
+Return ONLY JSON with a proposal:
+[PROPOSE:{"category":"characters|factions|artifacts|prophecies|history","entry":{"name":"X","role or type":"Y","description":"Z","secret":"W"}}]
+After the proposal token, write 1 sentence explaining why this addition would enrich the world.`,
+        { maxTokens: 300 }
+      );
+      // Post to chat
+      setNav('oracle');
+      const msgs = $('chatMsgs');
+      const { cleanReply, proposal } = extractProposal(raw);
+      msgs.innerHTML += `<div class="msg-oracle-guide">${esc(cleanReply)}</div>`;
+      if (proposal) renderProposalCard(proposal, msgs);
+      msgs.scrollTop = msgs.scrollHeight;
+      AppState.chatHistory.push({ role: 'assistant', content: raw });
+      saveOracleChat();
+    } catch (err) {
+      showToast(`Suggest failed: ${err.message}`);
+    }
+    btn.disabled = false; btn.textContent = '✦ Suggest Addition';
+  });
   document.querySelectorAll('.oracle-prompt-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{$('chatInput').value=btn.dataset.q;setNav('oracle');sendChat();});
   });

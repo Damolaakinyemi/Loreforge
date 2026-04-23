@@ -1,25 +1,24 @@
-/* Add to loreforge2/styles.css */
+/* Replace the :root block in styles.css */
+:root {
+  --gold:           #e5c26b; /* Brighter, more metallic gold */
+  --gold-dim:       #a38640;
+  --gold-bright:    #fff0c2;
+  --parchment:      #fdfaf3;
+  --parchment-dim:  #e0d8c3;
+  
+  --bg:             #0a0907; /* Deeper black */
+  --panel:          #14120e;
+  --panel-light:    #1c1914;
+  
+  /* Modern translucent surfaces */
+  --surface:        rgba(255, 255, 255, 0.04);
+  --surface-hover:  rgba(229, 194, 107, 0.08);
+  --surface-active: rgba(229, 194, 107, 0.12);
 
-.nova-stat-bar {
-  height: 4px;
-  background: var(--surface);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 4px;
-}
-
-.nova-stat-fill {
-  height: 100%;
-  transition: width 1s ease-in-out;
-}
-
-/* Pulsing effect for regions with low stability */
-@keyframes crisisPulse {
-  0% { filter: drop-shadow(0 0 2px var(--err)); }
-  50% { filter: drop-shadow(0 0 8px var(--err)); }
-  100% { filter: drop-shadow(0 0 2px var(--err)); }
-}
-
-.region-crisis {
-  animation: crisisPulse 2s infinite;
+  --border:         rgba(229, 194, 107, 0.2);
+  --border-bright:  rgba(229, 194, 107, 0.5);
+  
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.8);
+  --font-display:   'Cinzel', serif;
+  --font-body:      'Crimson Pro', serif;
 }

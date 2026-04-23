@@ -167,14 +167,23 @@ export const AppState = {
 
   nova: { year:0, running:false, events:[], intervalId:null, regionState:{} },
 
-  dnd: {
-    turn: 0,
-    active: false,
-    history: [],
-    currentScene: null,
+  // Adventure Mode — lore-grounded choose-your-own-adventure
+  adventure: {
+    active:       false,
+    chapter:      0,
+    playerName:   '',
+    playerFaction: null,   // { name, type, motivation } — chosen from world factions
+    playerOrigin:  null,   // { name, type } — chosen from world regions
+    playerBg:     '',      // optional personal background text
+
+    // Faction standing: how each faction views the player -100 to +100
+    // Positive = ally, Negative = enemy, 0 = unknown
+    factionStanding: {},   // { factionName: number }
+
+    currentRegion: null,   // region name player is currently in
+    history: [],           // [{chapter, sceneTitle, choiceText, outcome}]
     currentChoices: [],
-    focusRegion: null,
-    playerStats: { reputation:50, power:10, knowledge:5 },
+    worldImpacts: [],      // events fed back into Nova
   },
 
   // Oracle role selection and persistent chat memory

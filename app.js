@@ -998,23 +998,29 @@ function openRegionModal(regionName) {
   $('btnRegionOracle').onclick=()=>{closeModal('regionModal');oracleAbout(region.name);};
   $('btnRegionDnd').onclick=()=>{
     closeModal('regionModal');
-    // Pre-select this region as origin and navigate to adventure setup
     AppState.adventure.playerOrigin  = region;
     AppState.adventure.currentRegion = region.name;
     setNav('dnd');
-    // Auto-highlight this region in the setup grid
+    // After setup renders, auto-select this region's card
     setTimeout(()=>{
-      const grid=$('advRegionGrid');
-      if(grid){
-        const cards=grid.querySelectorAll('.adv-select-card');
-        cards.forEach(c=>{
-          if(c.querySelector('.adv-card-name')?.textContent===region.name){
-            cards.forEach(x=>x.classList.remove('selected'));
-            c.classList.add('selected');
+      const grid = $('advRegionGrid');
+      if (!grid) return;
+      grid.querySelectorAll('.adv-select-card').forEach(c => {
+        if (c.querySelector('.adv-card-name')?.textContent === region.name) {
+          grid.querySelectorAll('.adv-select-card').forEach(x => x.classList.remove('selected'));
+          c.classList.add('selected');
+          // Trigger the refresh button state
+          const btn = $('btnAdvBegin');
+          const status = $('advSelectionStatus');
+          if (AppState.adventure.playerFaction && btn) {
+            btn.disabled = false;
+            if (status) status.textContent = `${AppState.adventure.playerFaction.name} · ${region.name} — ready to begin`;
+          } else if (status) {
+            status.textContent = 'Now choose your faction';
           }
-        });
-      }
-    },100);
+        }
+      });
+    }, 150);
   };
   $('btnRegionClose').onclick=()=>closeModal('regionModal');
   openModal('regionModal');
@@ -1215,21 +1221,43 @@ function showAdventureSetup() {
   if (!W) return;
 
   // Show setup, hide game
-  $('advSetup').style.display = 'flex';
-  $('advGame').style.display  = 'none';
+  const setup = $('advSetup'), game = $('advGame');
+  if (setup) setup.style.display = 'flex';
+  if (game)  game.style.display  = 'none';
 
-  // Render faction choices from world data
+  // Helper: update begin button and status text
+  function refreshBeginBtn() {
+    const btn    = $('btnAdvBegin');
+    const status = $('advSelectionStatus');
+    const hasFac = !!AppState.adventure.playerFaction;
+    const hasReg = !!AppState.adventure.playerOrigin;
+
+    if (btn) btn.disabled = !(hasFac && hasReg);
+    if (status) {
+      if (!hasFac && !hasReg) status.textContent = 'Select a faction and origin to begin';
+      else if (!hasFac)       status.textContent = 'Now choose your faction';
+      else if (!hasReg)       status.textContent = 'Now choose your origin region';
+      else {
+        const fName = AppState.adventure.playerFaction.name;
+        const rName = AppState.adventure.playerOrigin.name;
+        status.textContent  = `${fName} · ${rName} — ready to begin`;
+        status.style.color  = 'var(--gold-dim)';
+      }
+    }
+  }
+
+  // Render faction cards
   const factions = W.factions || [];
   const factionGrid = $('advFactionGrid');
   if (factionGrid) {
     if (!factions.length) {
-      factionGrid.innerHTML = '<div class="adv-empty-note">No factions defined yet. Add factions in the lore panel first.</div>';
+      factionGrid.innerHTML = '<div class="adv-empty-note">No factions defined. Add factions in the Factions lore panel first, then return here.</div>';
     } else {
       factionGrid.innerHTML = factions.map((f, i) => `
-        <div class="adv-select-card" data-type="faction" data-idx="${i}">
+        <div class="adv-select-card${AppState.adventure.playerFaction?.name === f.name ? ' selected' : ''}" data-type="faction" data-idx="${i}">
           <div class="adv-card-name">${esc(f.name)}</div>
           <div class="adv-card-sub">${esc(f.type || '')}</div>
-          <div class="adv-card-desc">${esc((f.motivation || '').slice(0, 100))}</div>
+          <div class="adv-card-desc">${esc((f.motivation || f.description || '').slice(0, 110))}</div>
         </div>`).join('');
 
       factionGrid.querySelectorAll('.adv-select-card').forEach(card => {
@@ -1237,35 +1265,40 @@ function showAdventureSetup() {
           factionGrid.querySelectorAll('.adv-select-card').forEach(c => c.classList.remove('selected'));
           card.classList.add('selected');
           AppState.adventure.playerFaction = factions[parseInt(card.dataset.idx, 10)];
+          refreshBeginBtn();
         });
       });
     }
   }
 
-  // Render region choices from world data
+  // Render region cards
   const regions = W.regions || [];
   const regionGrid = $('advRegionGrid');
   if (regionGrid) {
     if (!regions.length) {
-      regionGrid.innerHTML = '<div class="adv-empty-note">No regions defined yet.</div>';
+      regionGrid.innerHTML = '<div class="adv-empty-note">No regions defined.</div>';
     } else {
       regionGrid.innerHTML = regions.map((r, i) => `
-        <div class="adv-select-card" data-type="region" data-idx="${i}" style="border-left: 3px solid ${r.color || '#4a6a8a'}">
+        <div class="adv-select-card${AppState.adventure.playerOrigin?.name === r.name ? ' selected' : ''}" data-type="region" data-idx="${i}" style="border-left-color:${r.color || 'var(--bord-f)'}">
           <div class="adv-card-name">${esc(r.name)}</div>
           <div class="adv-card-sub">${esc(r.type || '')}</div>
-          <div class="adv-card-desc">${esc((r.description || '').slice(0, 100))}</div>
+          <div class="adv-card-desc">${esc((r.description || '').slice(0, 110))}</div>
         </div>`).join('');
 
       regionGrid.querySelectorAll('.adv-select-card').forEach(card => {
         card.addEventListener('click', () => {
           regionGrid.querySelectorAll('.adv-select-card').forEach(c => c.classList.remove('selected'));
           card.classList.add('selected');
-          AppState.adventure.playerOrigin  = regions[parseInt(card.dataset.idx, 10)];
-          AppState.adventure.currentRegion = regions[parseInt(card.dataset.idx, 10)].name;
+          const r = regions[parseInt(card.dataset.idx, 10)];
+          AppState.adventure.playerOrigin  = r;
+          AppState.adventure.currentRegion = r.name;
+          refreshBeginBtn();
         });
       });
     }
   }
+
+  refreshBeginBtn();
 }
 
 /** Reset adventure to setup state */
@@ -1283,9 +1316,10 @@ function resetAdventure() {
     currentChoices:  [],
     worldImpacts:    [],
   };
-  $('advSetup').style.display = 'flex';
-  $('advGame').style.display  = 'none';
-  showAdventureSetup();
+  const setup = $('advSetup'), game = $('advGame');
+  if (setup) setup.style.display = 'flex';
+  if (game)  game.style.display  = 'none';
+  if (hasWorld()) showAdventureSetup();
 }
 
 /** Begin the adventure after setup is complete */
@@ -1296,26 +1330,25 @@ async function beginAdventure() {
   if (!adv.playerFaction) { showToast('Choose your faction first.'); return; }
   if (!adv.playerOrigin)  { showToast('Choose your origin region first.'); return; }
 
-  // Collect name and background
+  // Collect name and background from inputs
   adv.playerName = $('advPlayerName')?.value.trim() || '';
   adv.playerBg   = $('advPlayerBg')?.value.trim()   || '';
   adv.active     = true;
   adv.chapter    = 1;
 
-  // Initialize faction standings — start neutral with all, slightly positive with own faction
+  // Initialize faction standings
   adv.factionStanding = {};
   (W.factions || []).forEach(f => {
     adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
   });
 
-  // Switch to game view
-  $('advSetup').style.display = 'none';
-  $('advGame').style.display  = 'flex';
+  // Switch panels
+  const setup = $('advSetup'), game = $('advGame');
+  if (setup) setup.style.display = 'none';
+  if (game)  game.style.display  = 'flex';
 
   renderAdventureCharacterCard();
   renderFactionStandings();
-
-  // Generate opening scene
   await generateAdventureScene('OPENING', null);
 }
 

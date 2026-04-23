@@ -194,83 +194,89 @@
       <div id="view-dnd" class="view">
         <div class="adv-layout">
 
-          <!-- CHARACTER SETUP (shown before adventure starts) -->
+          <!-- SETUP (visible until adventure starts) -->
           <div class="adv-setup" id="advSetup">
-            <div class="adv-setup-inner">
-              <div class="adv-setup-title">
-                <span class="adv-badge">✦ ADVENTURE</span>
+            <div class="adv-setup-scroll">
+              <div class="adv-setup-hero">
+                <div class="adv-badge">✦ Adventure</div>
                 <h2>Who are you?</h2>
-                <p>Your origin and allegiance shape everything — how people see you, what doors open, what enemies you make.</p>
+                <p>Your faction and homeland shape everything the Oracle narrates — how the world receives you, which doors open, and which enemies you inherit.</p>
               </div>
 
-              <div class="adv-setup-fields">
-                <div class="adv-setup-section">
-                  <label class="adv-setup-label">Your Faction</label>
-                  <p class="adv-setup-hint">The faction you were born into, serve, or have sworn to. This determines your starting allies, enemies, and reputation.</p>
-                  <div class="adv-faction-grid" id="advFactionGrid">
-                    <!-- Rendered from world factions -->
+              <div class="adv-section">
+                <div class="adv-section-head">
+                  <span class="adv-section-num">01</span>
+                  <div>
+                    <div class="adv-section-title">Choose Your Faction</div>
+                    <div class="adv-section-hint">The group you were born into, serve, or have sworn to</div>
                   </div>
                 </div>
+                <div class="adv-card-grid" id="advFactionGrid"></div>
+              </div>
 
-                <div class="adv-setup-section">
-                  <label class="adv-setup-label">Your Origin Region</label>
-                  <p class="adv-setup-hint">Where you grew up. The place whose culture, climate, and secrets shaped who you are.</p>
-                  <div class="adv-region-grid" id="advRegionGrid">
-                    <!-- Rendered from world regions -->
+              <div class="adv-section">
+                <div class="adv-section-head">
+                  <span class="adv-section-num">02</span>
+                  <div>
+                    <div class="adv-section-title">Choose Your Origin</div>
+                    <div class="adv-section-hint">The land whose culture and secrets shaped who you are</div>
                   </div>
                 </div>
+                <div class="adv-card-grid" id="advRegionGrid"></div>
+              </div>
 
-                <div class="adv-setup-section">
-                  <label class="adv-setup-label">Your Name & Background</label>
-                  <p class="adv-setup-hint">Optional — leave blank and the Oracle will name you based on your faction's culture.</p>
-                  <input id="advPlayerName" type="text" class="adv-name-input" placeholder="Your character's name (optional)…"/>
-                  <textarea id="advPlayerBg" class="adv-bg-input" placeholder="Any personal detail — a scar, a debt, a mission, a secret… (optional)"></textarea>
+              <div class="adv-section">
+                <div class="adv-section-head">
+                  <span class="adv-section-num">03</span>
+                  <div>
+                    <div class="adv-section-title">Your Identity</div>
+                    <div class="adv-section-hint">Optional — leave blank and the Oracle names you</div>
+                  </div>
+                </div>
+                <div class="adv-identity-row">
+                  <div class="adv-identity-field">
+                    <label>Name</label>
+                    <input id="advPlayerName" type="text" placeholder="Your character's name…"/>
+                  </div>
+                  <div class="adv-identity-field adv-identity-wide">
+                    <label>Personal Detail</label>
+                    <input id="advPlayerBg" type="text" placeholder="A scar, a debt, a mission, a secret…"/>
+                  </div>
                 </div>
               </div>
 
-              <button class="btn-forge adv-begin-btn" id="btnAdvBegin">✦ Begin Your Story</button>
+              <div class="adv-setup-footer">
+                <div class="adv-selection-status" id="advSelectionStatus">Select a faction and origin to begin</div>
+                <button class="adv-begin-btn" id="btnAdvBegin" disabled>✦ Begin Your Story</button>
+              </div>
             </div>
           </div>
 
-          <!-- ADVENTURE IN PROGRESS (hidden until started) -->
-          <div class="adv-game" id="advGame" style="display:none">
-            <div class="adv-game-inner">
-
-              <!-- Left: Narrative -->
-              <div class="adv-narrative-panel">
-                <div class="adv-game-header">
-                  <div class="adv-game-header-left">
-                    <span class="adv-badge">✦ ADVENTURE</span>
-                    <span class="adv-scene-label" id="advSceneLabel">The story unfolds…</span>
-                  </div>
-                  <div class="adv-game-header-right">
-                    <span class="adv-chapter-badge" id="advChapterBadge">Chapter 1</span>
-                    <button class="btn-sm" id="btnAdvRestart">↺ New Story</button>
-                  </div>
+          <!-- GAME (hidden until adventure starts) -->
+          <div class="adv-game" id="advGame">
+            <div class="adv-narrative-panel">
+              <div class="adv-game-header">
+                <div class="adv-game-header-left">
+                  <span class="adv-badge" style="font-size:.5rem">✦ Adventure</span>
+                  <span class="adv-scene-label" id="advSceneLabel">The story unfolds…</span>
                 </div>
-
-                <div class="adv-narrative" id="advNarrative">
-                  <div class="adv-loading">The Oracle weaves your fate…</div>
+                <div class="adv-game-header-right">
+                  <span class="adv-chapter-badge" id="advChapterBadge">Chapter 1</span>
+                  <button class="btn-sm" id="btnAdvRestart">↺ New Story</button>
                 </div>
               </div>
-
-              <!-- Right: Choices + Log -->
-              <div class="adv-choices-panel">
-                <div class="adv-character-card" id="advCharacterCard">
-                  <!-- Name, faction, origin — rendered by JS -->
-                </div>
-
-                <div class="adv-standing-bars" id="advStandingBars">
-                  <!-- Faction standing bars — rendered by JS -->
-                </div>
-
-                <div class="adv-choices-header">What do you do?</div>
-                <div class="adv-choices" id="advChoices"></div>
-
-                <div class="adv-log-header">Your Journey</div>
-                <div class="adv-log" id="advLog"></div>
+              <div class="adv-narrative" id="advNarrative">
+                <div class="adv-loading">The Oracle weaves your fate…</div>
               </div>
+            </div>
 
+            <div class="adv-choices-panel">
+              <div class="adv-character-card" id="advCharacterCard"></div>
+              <div class="adv-standing-bars" id="advStandingBars"></div>
+              <div class="adv-choices-header">What do you do?</div>
+              <div class="adv-choices" id="advChoices"></div>
+              <div class="adv-log-header">Your Journey</div>
+              <div class="adv-log" id="advLog"></div>
             </div>
           </div>
 

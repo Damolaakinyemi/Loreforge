@@ -25,6 +25,8 @@ import {
   runScan, executeRepairs, openDiag, closeDiag, toggleDiag,
 } from './diagnostics.js';
 
+import { renderIllustratedMap, renderMiniMap } from './map.js';
+
 // ─── UTILITY ─────────────────────────────────────────────────
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -571,129 +573,18 @@ function initWorld() {
 // ─────────────────────────────────────────────────────────────
 
 function renderMap() {
-  const svg = document.getElementById('worldMap');
-  if (!svg) return;
-  svg.innerHTML = '';
-
-  const defs = document.createElementNS(SVG_NS, 'defs');
-  defs.innerHTML = `
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(201,168,76,0.04)" stroke-width="0.5"/>
-    </pattern>`;
-  svg.appendChild(defs);
-
-  svg.appendChild(svgEl('rect', { width:800, height:560, fill:'#0a0806' }));
-  svg.appendChild(svgEl('rect', { width:800, height:560, fill:'url(#grid)' }));
-  svg.appendChild(svgEl('rect', { x:6, y:6, width:788, height:548, fill:'none', stroke:'rgba(201,168,76,0.12)', 'stroke-width':1 }));
-
-  if (!hasWorld() || !AppState.world.regions?.length) {
-    const msg = svgEl('text', { x:400, y:280, 'text-anchor':'middle', fill:'rgba(201,168,76,0.2)', 'font-family':'Cinzel,serif', 'font-size':12, 'letter-spacing':3 });
-    msg.textContent = 'FORGE A WORLD TO SEE THE MAP';
-    svg.appendChild(msg);
-    return;
-  }
-
-  const regions = AppState.world.regions;
-
-  // Connection lines between nearby regions
-  regions.forEach((r, i) => {
-    regions.forEach((r2, j) => {
-      if (j <= i) return;
-      const dist = Math.hypot(r.x - r2.x, r.y - r2.y);
-      if (dist < 260) {
-        svg.appendChild(svgEl('line', { x1:r.x, y1:r.y, x2:r2.x, y2:r2.y, stroke:'rgba(201,168,76,0.06)', 'stroke-width':1, 'stroke-dasharray':'4 6' }));
-      }
-    });
-  });
-
-  // Render each region
-  regions.forEach(region => {
-    const rx = Math.max(60, Math.min(740, parseFloat(region.x) || 300));
-    const ry = Math.max(60, Math.min(500, parseFloat(region.y) || 280));
-    const rr = Math.max(40, Math.min(95, parseFloat(region.radius) || 65));
-    const col = region.color || '#4a6a8a';
-    const simState = AppState.nova.regionState[region.name];
-    const powerPct = simState ? simState.power / 100 : 0.5;
-
-    const g = document.createElementNS(SVG_NS, 'g');
-    g.style.cursor = 'pointer';
-    g.classList.add('map-region');
-
-    // Outer halo
-    g.appendChild(svgEl('circle', { cx:rx, cy:ry, r:rr+14, fill:col, 'fill-opacity':0.05 }));
-    // Main circle — opacity scales with power level
-    g.appendChild(svgEl('circle', { cx:rx, cy:ry, r:rr, fill:col, 'fill-opacity': 0.15 + powerPct * 0.2, stroke:col, 'stroke-width':1.5, 'stroke-opacity':0.5 + powerPct * 0.3 }));
-    // Centre dot
-    g.appendChild(svgEl('circle', { cx:rx, cy:ry, r:5, fill:col, 'fill-opacity':0.9 }));
-
-    // Region label
-    const label = svgEl('text', { x:rx, y:ry+rr+16, 'text-anchor':'middle', fill:'#c8b89a', 'font-family':'Cinzel,serif', 'font-size':9, 'letter-spacing':1 });
-    label.textContent = (region.name||'').toUpperCase();
-    g.appendChild(label);
-
-    // Power bar below label
-    if (simState) {
-      const barW = Math.min(80, rr * 1.1);
-      g.appendChild(svgEl('rect', { x:rx - barW/2, y:ry+rr+20, width:barW, height:3, fill:col, 'fill-opacity':0.15, rx:1.5 }));
-      g.appendChild(svgEl('rect', { x:rx - barW/2, y:ry+rr+20, width:barW * powerPct, height:3, fill:col, 'fill-opacity':0.7, rx:1.5 }));
-    }
-
-    g.addEventListener('mouseenter', e => showMapTooltip(e, `${region.name}  ·  ${region.type||''}`));
-    g.addEventListener('mouseleave', () => hideMapTooltip());
-    g.addEventListener('click', () => openRegionModal(region.name));
-    svg.appendChild(g);
-  });
-
-  // Icon overlays for characters/factions/artifacts
-  Object.entries(MAP_ICONS).forEach(([cat, { icon, color }]) => {
-    (AppState.world[cat] ?? []).forEach(item => {
-      const ref = (AppState.world.regions || []).find(r =>
-        item.region && r.name?.toLowerCase().includes((item.region||'').toLowerCase().split(' ')[0].slice(0,4))
-      );
-      if (!ref) return;
-      const px = parseFloat(ref.x) + (Math.random() * 32 - 16);
-      const py = parseFloat(ref.y) + (Math.random() * 32 - 16);
-      const pin = svgEl('text', { x:px, y:py, 'text-anchor':'middle', 'dominant-baseline':'middle', 'font-size':11, fill:color });
-      pin.textContent = icon; pin.style.cursor = 'pointer';
-      pin.addEventListener('mouseenter', e => showMapTooltip(e, `${item.name} (${cat.replace(/s$/,'')})`));
-      pin.addEventListener('mouseleave', () => hideMapTooltip());
-      svg.appendChild(pin);
-    });
-  });
-
-  // World watermark
-  const wm = svgEl('text', { x:400, y:554, 'text-anchor':'middle', fill:'rgba(201,168,76,0.15)', 'font-family':'Cinzel,serif', 'font-size':8, 'letter-spacing':3 });
-  wm.textContent = `${AppState.world.worldName.toUpperCase()} ✦ ${(AppState.world.genre||'').toUpperCase()}`;
-  svg.appendChild(wm);
+  if (!hasWorld()) return;
+  renderIllustratedMap(
+    'worldMap',
+    AppState.world,
+    AppState.nova,
+    (regionName) => openRegionModal(regionName)
+  );
 }
 
 function renderNovaMap() {
-  const svg = document.getElementById('novaMap');
-  if (!svg || !hasWorld()) return;
-  svg.innerHTML = '';
-
-  svg.appendChild(svgEl('rect', { width:400, height:280, fill:'#0a0806' }));
-
-  const regions = AppState.world.regions || [];
-  const scaleX  = 400 / 800;
-  const scaleY  = 280 / 560;
-
-  regions.forEach(region => {
-    const rx = (parseFloat(region.x)||300) * scaleX;
-    const ry = (parseFloat(region.y)||280) * scaleY;
-    const rr = (parseFloat(region.radius)||65) * Math.min(scaleX, scaleY);
-    const col = region.color || '#4a6a8a';
-    const simState = AppState.nova.regionState[region.name];
-    const powerPct = simState ? simState.power / 100 : 0.5;
-
-    const g = document.createElementNS(SVG_NS, 'g');
-    g.appendChild(svgEl('circle', { cx:rx, cy:ry, r:rr, fill:col, 'fill-opacity': 0.15 + powerPct * 0.25, stroke:col, 'stroke-width':1, 'stroke-opacity':0.5 }));
-    g.appendChild(svgEl('circle', { cx:rx, cy:ry, r:3, fill:col, 'fill-opacity':0.9 }));
-    const lbl = svgEl('text', { x:rx, y:ry+rr+8, 'text-anchor':'middle', fill:'#8a7858', 'font-family':'Cinzel,serif', 'font-size':6, 'letter-spacing':1 });
-    lbl.textContent = (region.name||'').toUpperCase().slice(0,10);
-    g.appendChild(lbl);
-    svg.appendChild(g);
-  });
+  if (!hasWorld()) return;
+  renderMiniMap('novaMap', AppState.world, AppState.nova);
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -1,24 +1,161 @@
-/* Replace the :root block in styles.css */
-:root {
-  --gold:           #e5c26b; /* Brighter, more metallic gold */
-  --gold-dim:       #a38640;
-  --gold-bright:    #fff0c2;
-  --parchment:      #fdfaf3;
-  --parchment-dim:  #e0d8c3;
-  
-  --bg:             #0a0907; /* Deeper black */
-  --panel:          #14120e;
-  --panel-light:    #1c1914;
-  
-  /* Modern translucent surfaces */
-  --surface:        rgba(255, 255, 255, 0.04);
-  --surface-hover:  rgba(229, 194, 107, 0.08);
-  --surface-active: rgba(229, 194, 107, 0.12);
+/* ════════════════════════════════════════════════════════
+   LOREFORGE 2 — CLAUDE EDITION
+   Clean, Scholarly, Modern Minimalist
+════════════════════════════════════════════════════════ */
 
-  --border:         rgba(229, 194, 107, 0.2);
-  --border-bright:  rgba(229, 194, 107, 0.5);
+:root {
+  /* Claude's Signature Palette */
+  --bg:             #ffffff;
+  --panel:          #f9f9f8;
+  --panel-border:   #e5e5e0;
   
-  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.8);
-  --font-display:   'Cinzel', serif;
-  --font-body:      'Crimson Pro', serif;
+  --text-main:      #1d1d19;
+  --text-muted:     #6a6a62;
+  --text-faint:     #9b9b93;
+  
+  /* Anthropic Purple/Lilac Accents */
+  --accent:         #7c3aed; 
+  --accent-soft:    #f5f0ff;
+  --accent-hover:   #6d28d9;
+  
+  --error:          #d93025;
+  --success:        #188038;
+
+  /* Typography & Spacing */
+  --font-display:   'Inter', -apple-system, sans-serif;
+  --font-body:      'Inter', -apple-system, sans-serif;
+  --radius:         12px;
+  --shadow-sm:      0 1px 3px rgba(0,0,0,0.05);
+  --shadow-md:      0 4px 12px rgba(0,0,0,0.08);
+  --transition:     0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── BASE ─────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--text-main);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────── */
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.header-main {
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 1.5rem;
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+}
+
+/* ── CARDS & PANELS ────────────────────────────────── */
+.screen, .lore-item, .repeater-item {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 1.5rem;
+  transition: var(--transition);
+}
+
+.lore-item:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── INPUTS & BUTTONS ──────────────────────────────── */
+input[type="text"], input[type="password"], textarea {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: var(--transition);
+  background: var(--panel);
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.btn-forge {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 0.8rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-forge:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+/* ── NOVA SIMULATOR ────────────────────────────────── */
+.nova-region-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.stat-bar-bg {
+  background: #e5e5e0;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.stat-bar-fill {
+  background: var(--accent);
+  height: 100%;
+  border-radius: 3px;
+}
+
+/* ── MAP OVERHAUL ──────────────────────────────────── */
+#mapContainer {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 2rem;
+}
+
+.region-path {
+  fill: #fff;
+  stroke: #ccc;
+  stroke-width: 1;
+  transition: all 0.3s;
+}
+
+.region-path:hover {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  cursor: pointer;
+}
+
+/* ── DIAGNOSTICS (THE DEV LOOK) ────────────────────── */
+.diag-bar {
+  background: #1d1d19;
+  color: #fff;
+  font-family: 'SF Mono', monospace;
+  border-radius: 8px 8px 0 0;
 }

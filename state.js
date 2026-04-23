@@ -93,6 +93,59 @@ export const INTERVENTION_OPTIONS = [
   {label:'🌿 Golden Age',prompt:'A period of peace and prosperity begins.'},
 ];
 
+// ═══ SURPRISE ME TASTE DIALS ═══
+export const TASTE_DIALS = [
+  { id:'tone',        label:'Tone',        left:'Dark',     right:'Hopeful',   default:50 },
+  { id:'scale',       label:'Scale',       left:'Intimate', right:'Epic',      default:50 },
+  { id:'familiarity', label:'Familiarity', left:'Classic',  right:'Weird',     default:50 },
+  { id:'density',     label:'Density',     left:'Sparse',   right:'Rich',      default:50 },
+  { id:'originality', label:'Originality', left:'Safe',     right:'Bold',      default:65 },
+];
+
+export const STYLE_PRESETS = [
+  { id:'none',    label:'No preset',        description:'' },
+  { id:'ghibli',  label:'✨ Studio Ghibli',  description:'Environmental themes, quiet villains, transformation motifs, spirit worlds, and hopeful melancholy.' },
+  { id:'souls',   label:'🗡 Dark Souls',     description:'A world defined by what has already fallen. Tragic heroes, cryptic lore, rituals outliving meaning, beauty in decay.' },
+  { id:'earthsea',label:'🌊 Earthsea',       description:'Archipelago geography, true-name magic, slow thoughtful prose, balance as cosmic principle.' },
+  { id:'witcher', label:'⚔ The Witcher',     description:'Morally grey, folklore-rooted, political intrigue, monsters are metaphors, reluctant protagonists.' },
+  { id:'borges',  label:'📚 Borges',         description:'Infinite libraries, mirrored labyrinths, philosophical paradoxes, reality as puzzle.' },
+  { id:'miyazaki',label:'🌿 Miyazaki',       description:'Nature vs industry, child heroes, flying machines, kindness as strength, wonder without irony.' },
+];
+
+// ═══ ORACLE ROLES ═══
+export const ORACLE_ROLES = {
+  oracle: {
+    label: '☽ The Oracle',
+    description: 'Neutral narrator and guide',
+    systemPrompt: 'You are the Oracle — a wise, atmospheric guide for this world. Be immersive and specific. Draw on the world lore provided.',
+  },
+  cartographer: {
+    label: '◈ The Cartographer',
+    description: 'Geography, terrain, travel',
+    systemPrompt: 'You are the Cartographer — focused on the physical world. Answer in terms of terrain, routes, borders, distances, climates, and how places feel to travel through. Describe regions like someone who has walked them.',
+  },
+  historian: {
+    label: '📜 The Historian',
+    description: 'Timeline, causality, past events',
+    systemPrompt: 'You are the Historian — focused on cause and effect across time. Frame answers in terms of "this happened because…" and "this led to…". Connect present events to past ones explicitly.',
+  },
+  devil: {
+    label: '⚠ The Devil\'s Advocate',
+    description: 'Challenges your choices',
+    systemPrompt: 'You are the Devil\'s Advocate — you challenge the user\'s creative choices. Push back on clichés, identify weak logic in the lore, and suggest what would make this world stronger. Be direct but constructive, not mean.',
+  },
+  dm: {
+    label: '⚄ The Dungeon Master',
+    description: 'Scenarios, encounters, adventure',
+    systemPrompt: 'You are the Dungeon Master — focused on making this world playable. Frame answers in terms of scenarios, encounters, NPCs, hooks, stakes, and adventure pacing. Think in scenes.',
+  },
+};
+
+// ═══ WORLD PROPOSAL SYSTEM ═══
+// When Oracle suggests adding something to the world, it returns a proposal object
+// that the user can accept, edit, or reject
+export const PROPOSAL_CATEGORIES = ['regions','characters','factions','powers','history','prophecies','artifacts'];
+
 // ── APP STATE ────────────────────────────────────
 export const AppState = {
   world: null,
@@ -100,17 +153,35 @@ export const AppState = {
   selectedEntry: null,
   chatHistory: [],
   startTime: Date.now(),
-  currentUser: null,        // { username }
-  interview: { step:0, answers:{} },
+  currentUser: null,
+
+  // Interview — now with locked fields and per-field state
+  interview: {
+    step: 0,
+    answers: {},
+    locked: {},           // { fieldId: true } — locked fields survive re-rolls
+    tasteDials: { tone:50, scale:50, familiarity:50, density:50, originality:65 },
+    stylePreset: 'none',
+    savedForResume: false, // true once user has abandoned mid-wizard
+  },
+
   nova: { year:0, running:false, events:[], intervalId:null, regionState:{} },
+
   dnd: {
     turn: 0,
     active: false,
-    history: [],            // [{turn, choice, scene}]
+    history: [],
     currentScene: null,
     currentChoices: [],
     focusRegion: null,
     playerStats: { reputation:50, power:10, knowledge:5 },
+  },
+
+  // Oracle role selection and persistent chat memory
+  oracle: {
+    role: 'oracle',
+    chatByWorld: {},      // { worldSlotId: [{role, content, timestamp}] }
+    pendingProposals: [], // [{id, category, entry, conversationId}]
   },
 };
 
@@ -235,3 +306,88 @@ export function saveCurrentWorld() {
 
 // Alias for diagnostics compatibility
 export function saveWorld() { return saveCurrentWorld(); }
+
+// ═══════════════════════════════════════════════
+// INTERVIEW RESUME — save/load mid-wizard progress
+// ═══════════════════════════════════════════════
+const RESUME_KEY = 'lf_interview_resume';
+
+/** Save current interview progress for later resume */
+export function saveInterviewProgress() {
+  if (!AppState.currentUser) return;
+  try {
+    const key = `${RESUME_KEY}_${AppState.currentUser.username}`;
+    localStorage.setItem(key, JSON.stringify({
+      step:        AppState.interview.step,
+      answers:     AppState.interview.answers,
+      locked:      AppState.interview.locked,
+      tasteDials:  AppState.interview.tasteDials,
+      stylePreset: AppState.interview.stylePreset,
+      savedAt:     Date.now(),
+    }));
+    AppState.interview.savedForResume = true;
+  } catch (_) {}
+}
+
+/** Load saved interview progress, returns null if none */
+export function loadInterviewProgress() {
+  if (!AppState.currentUser) return null;
+  try {
+    const key = `${RESUME_KEY}_${AppState.currentUser.username}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+
+/** Clear saved interview progress (called after world is forged) */
+export function clearInterviewProgress() {
+  if (!AppState.currentUser) return;
+  try {
+    const key = `${RESUME_KEY}_${AppState.currentUser.username}`;
+    localStorage.removeItem(key);
+    AppState.interview.savedForResume = false;
+  } catch (_) {}
+}
+
+// ═══════════════════════════════════════════════
+// ORACLE CHAT MEMORY — persist per world
+// ═══════════════════════════════════════════════
+const CHAT_KEY = 'lf_oracle_chats';
+
+function getAllChats() {
+  try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+/** Save current chat history for the active world */
+export function saveOracleChat() {
+  if (!AppState.world?._slotId || !AppState.currentUser) return;
+  try {
+    const all  = getAllChats();
+    const key  = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+    all[key]   = AppState.chatHistory;
+    localStorage.setItem(CHAT_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+
+/** Load chat history for the active world */
+export function loadOracleChat() {
+  if (!AppState.world?._slotId || !AppState.currentUser) return [];
+  try {
+    const all = getAllChats();
+    const key = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+    return all[key] || [];
+  } catch { return []; }
+}
+
+/** Clear chat for current world */
+export function clearOracleChat() {
+  if (!AppState.world?._slotId || !AppState.currentUser) return;
+  try {
+    const all = getAllChats();
+    const key = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+    delete all[key];
+    localStorage.setItem(CHAT_KEY, JSON.stringify(all));
+  } catch (_) {}
+}

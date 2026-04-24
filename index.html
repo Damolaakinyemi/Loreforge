@@ -29,16 +29,15 @@
         <div class="login-panel active" id="panel-login">
           <div class="field"><label>Username</label><input id="loginUsername" type="text" placeholder="Your lorekeeper name…" autocomplete="username"/></div>
           <div class="field"><label>Password</label><input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
-          <div class="field"><label>Anthropic API Key</label><input id="loginApiKey" type="password" placeholder="sk-ant-…"/><span class="field-hint">Stored locally — never sent to any server except Anthropic.</span></div>
           <button class="btn-forge" id="btnLogin">Enter the Forge</button>
           <div class="login-error" id="loginError"></div>
         </div>
         <div class="login-panel" id="panel-register">
           <div class="field"><label>Choose a Username</label><input id="regUsername" type="text" placeholder="Your lorekeeper name…" autocomplete="username"/></div>
           <div class="field"><label>Choose a Password</label><input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password"/></div>
-          <div class="field"><label>Anthropic API Key</label><input id="regApiKey" type="password" placeholder="sk-ant-…"/><span class="field-hint">Required to generate worlds. Stored in your browser only.</span></div>
           <button class="btn-forge" id="btnRegister">Create Account</button>
           <div class="login-error" id="registerError"></div>
+          <p class="login-disclaimer">You'll be asked for your Anthropic API key after signing in. It's stored only in your browser.</p>
         </div>
       </div>
     </div>
@@ -52,7 +51,18 @@
           <h1 class="hub-title">⚜ Loreforge</h1>
           <p class="hub-user">Logged in as <strong id="hubUsername">Lorekeeper</strong></p>
         </div>
-        <button class="btn-sm" id="btnLogout">Sign Out</button>
+        <div class="hub-header-actions">
+          <button class="btn-sm" id="btnApiKeySettings">🔑 API Key</button>
+          <button class="btn-sm" id="btnLogout">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- API key status banner (shown if no key set) -->
+      <div class="hub-api-banner" id="hubApiBanner" style="display:none">
+        <span class="hub-api-icon">🔑</span>
+        <div class="hub-api-text">
+          <strong>No API key set.</strong> You need an Anthropic API key to generate worlds. Click "API Key" above to enter yours.
+        </div>
       </div>
       <div class="hub-actions">
         <button class="btn-forge hub-new-btn" id="btnNewWorld">⚒ Build a New World</button>
@@ -240,6 +250,23 @@
                 <div class="adv-section-head">
                   <span class="adv-section-num">03</span>
                   <div>
+                    <div class="adv-section-title">Choose Your Archetype</div>
+                    <div class="adv-section-hint">Your training, nature, and how you approach the world — each has a different attribute shape</div>
+                  </div>
+                </div>
+                <div class="adv-archetype-grid" id="advArchetypeGrid"></div>
+                <div class="adv-attribute-display" id="advAttributeDisplay" style="display:none">
+                  <div class="adv-attribute-title" id="advAttributeTitle">Attributes</div>
+                  <div class="adv-attribute-triangle-wrap">
+                    <svg id="advAttributeTriangle" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg"></svg>
+                  </div>
+                </div>
+              </div>
+
+              <div class="adv-section">
+                <div class="adv-section-head">
+                  <span class="adv-section-num">04</span>
+                  <div>
                     <div class="adv-section-title">Your Identity</div>
                     <div class="adv-section-hint">Optional — leave blank and the Oracle names you</div>
                   </div>
@@ -273,7 +300,9 @@
                 </div>
                 <div class="adv-game-header-right">
                   <span class="adv-chapter-badge" id="advChapterBadge">Chapter 1</span>
-                  <button class="btn-sm" id="btnAdvRestart">↺ New Story</button>
+                  <button class="btn-sm" id="btnAdvSave" title="Save your adventure progress">💾 Save</button>
+                  <button class="btn-sm" id="btnAdvLoad" title="Load a saved adventure">📂 Load</button>
+                  <button class="btn-sm" id="btnAdvRestart">↺ New</button>
                 </div>
               </div>
               <div class="adv-narrative" id="advNarrative">
@@ -344,6 +373,82 @@
       </div>
 
     </main>
+  </div>
+
+  <!-- API KEY SETTINGS MODAL -->
+  <div class="modal-overlay" id="apiKeyModal">
+    <div class="modal">
+      <h3>🔑 Anthropic API Key</h3>
+      <div class="api-key-explain">
+        <p>Loreforge calls Anthropic's API directly from your browser. Your key is needed to generate worlds, simulations, and adventures.</p>
+        <p class="api-key-note"><strong>Your key is private.</strong> It's stored only in your browser's localStorage. It is never sent to any server except Anthropic. Other users of this site cannot see or use it.</p>
+        <p class="api-key-note">Don't have one? Get a key at <span class="api-key-link">console.anthropic.com</span>.</p>
+      </div>
+      <div class="field">
+        <label>Your API Key</label>
+        <input id="apiKeyInput" type="password" placeholder="sk-ant-…" autocomplete="off"/>
+        <span class="field-hint" id="apiKeyStatus"></span>
+      </div>
+      <div class="modal-btns">
+        <button class="btn-cancel" id="btnApiKeyCancel">Cancel</button>
+        <button class="btn-generate" id="btnApiKeySave">Save Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ITEM DETAIL MODAL (Nova describes a new item) -->
+  <div class="modal-overlay" id="itemDetailModal">
+    <div class="modal">
+      <div class="item-modal-header">
+        <span class="item-modal-icon">◆</span>
+        <div>
+          <h3 id="itemDetailTitle">Item Found</h3>
+          <div class="item-modal-sub" id="itemDetailSub"></div>
+        </div>
+      </div>
+      <div class="item-modal-body" id="itemDetailBody"></div>
+      <div class="modal-btns">
+        <button class="btn-generate" id="btnItemDetailClose">Continue →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADVENTURE LOAD / LEGACY MODAL -->
+  <div class="modal-overlay" id="advLoadModal">
+    <div class="modal modal-wide">
+      <h3 id="advLoadTitle">Saved Adventures</h3>
+      <div class="adv-load-list" id="advLoadList"></div>
+      <div class="modal-btns">
+        <button class="btn-cancel" id="btnAdvLoadClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEATH / LEGACY CHOICE MODAL -->
+  <div class="modal-overlay" id="deathChoiceModal">
+    <div class="modal">
+      <div class="death-modal-header">
+        <div class="death-icon">☥</div>
+        <h3>The Story Ends… or Does It?</h3>
+        <p class="death-subtitle" id="deathSubtitle">Your character has fallen.</p>
+      </div>
+      <div class="death-options">
+        <button class="death-option" id="btnDeathEnd">
+          <div class="death-option-icon">✕</div>
+          <div class="death-option-content">
+            <div class="death-option-title">End the Story</div>
+            <div class="death-option-desc">Close this chapter. Return to your world. Your legacy is recorded.</div>
+          </div>
+        </button>
+        <button class="death-option" id="btnDeathLegacy">
+          <div class="death-option-icon">☽</div>
+          <div class="death-option-content">
+            <div class="death-option-title">Continue the Legacy</div>
+            <div class="death-option-desc">An heir, a relative, or a stranger picks up what was left behind. They inherit your faction, some items, and the world you shaped — but must start over.</div>
+          </div>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- REGION MODAL -->

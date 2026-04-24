@@ -180,7 +180,7 @@ export const AppState = {
 
   // Adventure inventory, health, achievements
   adventureInventory: {
-    items: [],           // [{name, description, obtainedChapter}]
+    items: [],           // [{name, description, history, usefulFor, obtainedChapter, isStarter}]
     health: 100,
     maxHealth: 100,
     keyInsights: [],     // important lore the player has learned
@@ -199,27 +199,81 @@ export const AppState = {
     active:       false,
     chapter:      0,
     playerName:   '',
-    playerFaction: null,   // { name, type, motivation } — chosen from world factions
-    playerOrigin:  null,   // { name, type } — chosen from world regions
-    playerBg:     '',      // optional personal background text
+    playerFaction: null,
+    playerOrigin:  null,
+    playerBg:     '',
 
-    // Faction standing: how each faction views the player -100 to +100
-    // Positive = ally, Negative = enemy, 0 = unknown
-    factionStanding: {},   // { factionName: number }
+    // Archetype choice drives starting attribute distribution
+    // Each archetype has the same 100 total points across 4 stats
+    playerArchetype: null,  // { id, label, description, stats: {strength, intelligence, dexterity, speed} }
 
-    currentRegion: null,   // region name player is currently in
-    history: [],           // [{chapter, sceneTitle, choiceText, outcome}]
+    factionStanding: {},
+
+    currentRegion: null,
+    history: [],
     currentChoices: [],
-    worldImpacts: [],      // events fed back into Nova
+    worldImpacts: [],
+
+    // Legacy tracking — when player dies, this captures their final state
+    // so their heir can inherit part of it
+    legacyChain: [],  // [{name, faction, origin, chapters, deathRegion, finalItems}]
   },
 
   // Oracle role selection and persistent chat memory
   oracle: {
     role: 'oracle',
-    chatByWorld: {},      // { worldSlotId: [{role, content, timestamp}] }
-    pendingProposals: [], // [{id, category, entry, conversationId}]
+    chatByWorld: {},
+    pendingProposals: [],
   },
 };
+
+// ═══ ADVENTURE ARCHETYPES — stat distributions ═══
+// Each archetype gets 100 total points across 4 attributes.
+// The attributes form a shape when visualized on a diamond/radial chart.
+export const ARCHETYPES = [
+  {
+    id:    'warrior',
+    label: 'Warrior',
+    icon:  '⚔',
+    description: 'Born with a blade in hand. Physical prowess above all.',
+    stats: { strength: 40, intelligence: 15, dexterity: 25, speed: 20 },
+  },
+  {
+    id:    'scholar',
+    label: 'Scholar',
+    icon:  '📜',
+    description: 'Raised among books and secrets. Knowledge is your weapon.',
+    stats: { strength: 15, intelligence: 45, dexterity: 25, speed: 15 },
+  },
+  {
+    id:    'rogue',
+    label: 'Rogue',
+    icon:  '🗡',
+    description: 'Shadows are your cover. Dexterity and speed keep you alive.',
+    stats: { strength: 20, intelligence: 20, dexterity: 35, speed: 25 },
+  },
+  {
+    id:    'wanderer',
+    label: 'Wanderer',
+    icon:  '◎',
+    description: 'Balanced in all things. A generalist who adapts to anything.',
+    stats: { strength: 25, intelligence: 25, dexterity: 25, speed: 25 },
+  },
+  {
+    id:    'ranger',
+    label: 'Ranger',
+    icon:  '🏹',
+    description: 'Swift and observant. You see what others miss, and you move before they react.',
+    stats: { strength: 20, intelligence: 25, dexterity: 25, speed: 30 },
+  },
+  {
+    id:    'mystic',
+    label: 'Mystic',
+    icon:  '✦',
+    description: 'Touched by the power system of your world. Wisdom beyond years.',
+    stats: { strength: 15, intelligence: 40, dexterity: 20, speed: 25 },
+  },
+];
 
 // ── WORLD HELPERS ────────────────────────────────
 export function normalizeWorld(raw) {
@@ -452,4 +506,65 @@ export function clearOracleChat() {
     delete all[key];
     localStorage.setItem(CHAT_KEY, JSON.stringify(all));
   } catch (_) {}
+}
+
+// ═══════════════════════════════════════════════
+// ADVENTURE SAVE STATES — save/load mid-run
+// Multiple save slots per world so player can bookmark key moments
+// ═══════════════════════════════════════════════
+const ADV_SAVES_KEY = 'lf_adv_saves';
+
+function getAllAdvSaves() {
+  try { return JSON.parse(localStorage.getItem(ADV_SAVES_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+/** Save current adventure run with a label */
+export function saveAdventureState(label) {
+  if (!AppState.world?._slotId || !AppState.currentUser) return { ok: false, error: 'No world' };
+  if (!AppState.adventure.active) return { ok: false, error: 'No active adventure' };
+  try {
+    const all = getAllAdvSaves();
+    const userKey  = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+    if (!all[userKey]) all[userKey] = [];
+    all[userKey].push({
+      label:      label || `Chapter ${AppState.adventure.chapter}`,
+      savedAt:    Date.now(),
+      adventure:  JSON.parse(JSON.stringify(AppState.adventure)),
+      inventory:  JSON.parse(JSON.stringify(AppState.adventureInventory)),
+    });
+    // Keep at most 10 adventure saves per world
+    if (all[userKey].length > 10) all[userKey].shift();
+    localStorage.setItem(ADV_SAVES_KEY, JSON.stringify(all));
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+/** Get all adventure saves for the active world */
+export function getAdventureSaves() {
+  if (!AppState.world?._slotId || !AppState.currentUser) return [];
+  const all = getAllAdvSaves();
+  const userKey = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+  return all[userKey] || [];
+}
+
+/** Load an adventure save by its index */
+export function loadAdventureSave(idx) {
+  const saves = getAdventureSaves();
+  const save  = saves[idx];
+  if (!save) return { ok: false, error: 'Save not found' };
+  AppState.adventure          = save.adventure;
+  AppState.adventureInventory = save.inventory;
+  return { ok: true };
+}
+
+/** Delete an adventure save */
+export function deleteAdventureSave(idx) {
+  if (!AppState.world?._slotId || !AppState.currentUser) return;
+  const all = getAllAdvSaves();
+  const userKey = `${AppState.currentUser.username}_${AppState.world._slotId}`;
+  if (all[userKey] && all[userKey][idx] !== undefined) {
+    all[userKey].splice(idx, 1);
+    localStorage.setItem(ADV_SAVES_KEY, JSON.stringify(all));
+  }
 }

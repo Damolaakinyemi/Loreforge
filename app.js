@@ -8,6 +8,7 @@ import {
   AppState, INTERVIEW_STEPS, CATEGORIES, CATEGORY_KEYS,
   DETAIL_SECTIONS, MAP_ICONS, LOAD_PHRASES, INTERVENTION_OPTIONS,
   TASTE_DIALS, STYLE_PRESETS, ORACLE_ROLES, PROPOSAL_CATEGORIES,
+  ARCHETYPES,
   normalizeWorld, validateWorld, buildWorldContext,
   getEntrySubLabel, hasWorld,
   registerUser, loginUser, logoutUser, restoreSession,
@@ -15,6 +16,7 @@ import {
   getUserSaves, saveWorldSlot, loadWorldSlot, deleteWorldSlot, saveCurrentWorld,
   saveInterviewProgress, loadInterviewProgress, clearInterviewProgress,
   saveOracleChat, loadOracleChat, clearOracleChat,
+  saveAdventureState, getAdventureSaves, loadAdventureSave, deleteAdventureSave,
 } from './state.js';
 import {callApi as _callApi, parseJsonResponse, ApiError} from './apiService.js';
 
@@ -63,26 +65,22 @@ function initLogin() {
   $('btnLogin').addEventListener('click',()=>{
     const u=$('loginUsername').value.trim();
     const p=$('loginPassword').value;
-    const k=$('loginApiKey').value.trim();
     $('loginError').textContent='';
     if(!u||!p){$('loginError').textContent='Enter username and password.';return;}
     const r=loginUser(u,p);
     if(!r.ok){$('loginError').textContent=r.error;return;}
-    if(k) saveApiKey(k);
     loadHub();
   });
 
   $('btnRegister').addEventListener('click',()=>{
     const u=$('regUsername').value.trim();
     const p=$('regPassword').value;
-    const k=$('regApiKey').value.trim();
     $('registerError').textContent='';
     if(!u||!p){$('registerError').textContent='Choose a username and password.';return;}
     if(p.length<4){$('registerError').textContent='Password must be at least 4 characters.';return;}
     const r=registerUser(u,p);
     if(!r.ok){$('registerError').textContent=r.error;return;}
     loginUser(u,p);
-    if(k) saveApiKey(k);
     loadHub();
   });
 }
@@ -91,8 +89,27 @@ function loadHub() {
   const user=AppState.currentUser;
   if(!user){showScreen('login');return;}
   $('hubUsername').textContent=user.username;
+  // Show API key banner if key is missing
+  const banner = $('hubApiBanner');
+  if (banner) banner.style.display = loadApiKey() ? 'none' : 'flex';
   renderHubSaves();
   showScreen('hub');
+}
+
+/** Open the API key settings modal */
+function openApiKeyModal() {
+  const input = $('apiKeyInput');
+  const status = $('apiKeyStatus');
+  if (!input) return;
+  const existing = loadApiKey();
+  input.value = existing || '';
+  if (status) {
+    status.textContent = existing
+      ? 'Key is set. Replace it if you want to use a different one.'
+      : 'No key saved yet. Paste yours here.';
+  }
+  openModal('apiKeyModal');
+  setTimeout(() => input.focus(), 100);
 }
 
 function renderHubSaves() {
@@ -1443,14 +1460,20 @@ function showAdventureSetup() {
     const status = $('advSelectionStatus');
     const hasFac = !!AppState.adventure.playerFaction;
     const hasReg = !!AppState.adventure.playerOrigin;
+    const hasArc = !!AppState.adventure.playerArchetype;
 
-    if (btn) btn.disabled = !(hasFac && hasReg);
+    if (btn) btn.disabled = !(hasFac && hasReg && hasArc);
     if (status) {
-      if (!hasFac && !hasReg) status.textContent = 'Select a faction and origin to begin';
-      else if (!hasFac)       status.textContent = 'Now choose your faction →';
-      else if (!hasReg)       status.textContent = 'Now choose your origin region →';
-      else {
-        status.textContent = `✦ ${AppState.adventure.playerFaction.name} · ${AppState.adventure.playerOrigin.name}`;
+      const missing = [];
+      if (!hasFac) missing.push('faction');
+      if (!hasReg) missing.push('origin');
+      if (!hasArc) missing.push('archetype');
+      if (missing.length) {
+        status.textContent = `Choose your ${missing.join(', ')} to begin`;
+        status.style.color = 'var(--faint)';
+      } else {
+        const a = AppState.adventure;
+        status.textContent = `✦ ${a.playerArchetype.label} · ${a.playerFaction.name} · from ${a.playerOrigin.name}`;
         status.style.color = 'var(--gold-dim)';
       }
     }
@@ -1508,15 +1531,146 @@ function showAdventureSetup() {
     }
   }
 
+  // Render archetype cards
+  const archetypeGrid = $('advArchetypeGrid');
+  if (archetypeGrid) {
+    archetypeGrid.innerHTML = ARCHETYPES.map((arch) => `
+      <div class="adv-archetype-card${AppState.adventure.playerArchetype?.id === arch.id ? ' selected' : ''}" data-arch="${arch.id}">
+        <div class="adv-arch-icon">${arch.icon}</div>
+        <div class="adv-arch-name">${esc(arch.label)}</div>
+        <div class="adv-arch-desc">${esc(arch.description)}</div>
+      </div>`).join('');
+
+    archetypeGrid.querySelectorAll('.adv-archetype-card').forEach(card => {
+      card.addEventListener('click', () => {
+        archetypeGrid.querySelectorAll('.adv-archetype-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        const arch = ARCHETYPES.find(a => a.id === card.dataset.arch);
+        AppState.adventure.playerArchetype = arch;
+        renderAttributeTriangle(arch);
+        refreshBeginBtn();
+      });
+    });
+
+    // If an archetype was already selected (e.g. resume), render the triangle
+    if (AppState.adventure.playerArchetype) {
+      renderAttributeTriangle(AppState.adventure.playerArchetype);
+    }
+  }
+
   refreshBeginBtn();
 }
 
-/** Reset adventure to setup state */
-function resetAdventure() {
+/**
+ * Draw an attribute shape as an SVG polygon.
+ * Four attributes = diamond (top, right, bottom, left).
+ * Each attribute extends from center proportional to its value / 50.
+ */
+function renderAttributeTriangle(archetype) {
+  const container = $('advAttributeDisplay');
+  const svg       = $('advAttributeTriangle');
+  const titleEl   = $('advAttributeTitle');
+  if (!svg || !container) return;
+
+  container.style.display = 'block';
+  if (titleEl) titleEl.textContent = `${archetype.icon} ${archetype.label} — Attribute Shape`;
+
+  const stats = archetype.stats;
+  const cx = 110, cy = 110, maxR = 80;
+
+  // Four cardinal points: top = strength, right = speed, bottom = intelligence, left = dexterity
+  const pts = [
+    { key: 'strength',     angle: -Math.PI / 2 },
+    { key: 'speed',        angle: 0 },
+    { key: 'intelligence', angle: Math.PI / 2 },
+    { key: 'dexterity',    angle: Math.PI },
+  ];
+
+  const pathPoints = pts.map(p => {
+    const v = stats[p.key] || 0;
+    const r = (v / 50) * maxR;
+    return [cx + Math.cos(p.angle) * r, cy + Math.sin(p.angle) * r];
+  });
+
+  const NS = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+
+  // Background grid diamond (max reference shape at 50 each = perfectly balanced)
+  const maxPts = pts.map(p => [cx + Math.cos(p.angle) * maxR, cy + Math.sin(p.angle) * maxR]);
+  const maxPath = document.createElementNS(NS, 'polygon');
+  maxPath.setAttribute('points', maxPts.map(p => p.join(',')).join(' '));
+  maxPath.setAttribute('fill', 'rgba(201,168,76,0.04)');
+  maxPath.setAttribute('stroke', 'rgba(201,168,76,0.2)');
+  maxPath.setAttribute('stroke-width', '1');
+  maxPath.setAttribute('stroke-dasharray', '3 3');
+  svg.appendChild(maxPath);
+
+  // Axis lines from center to each corner
+  pts.forEach(p => {
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', cx);
+    line.setAttribute('y1', cy);
+    line.setAttribute('x2', cx + Math.cos(p.angle) * maxR);
+    line.setAttribute('y2', cy + Math.sin(p.angle) * maxR);
+    line.setAttribute('stroke', 'rgba(201,168,76,0.15)');
+    line.setAttribute('stroke-width', '0.8');
+    svg.appendChild(line);
+  });
+
+  // Stat shape — filled polygon
+  const shape = document.createElementNS(NS, 'polygon');
+  shape.setAttribute('points', pathPoints.map(p => p.join(',')).join(' '));
+  shape.setAttribute('fill', 'rgba(201,168,76,0.25)');
+  shape.setAttribute('stroke', 'var(--gold)');
+  shape.setAttribute('stroke-width', '1.5');
+  svg.appendChild(shape);
+
+  // Stat labels and values
+  pts.forEach((p, i) => {
+    const lblR = maxR + 18;
+    const lx = cx + Math.cos(p.angle) * lblR;
+    const ly = cy + Math.sin(p.angle) * lblR;
+
+    const label = document.createElementNS(NS, 'text');
+    label.setAttribute('x', lx);
+    label.setAttribute('y', ly - 5);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', 'var(--gold-dim)');
+    label.setAttribute('font-family', 'Cinzel, serif');
+    label.setAttribute('font-size', '9');
+    label.setAttribute('letter-spacing', '1');
+    label.textContent = p.key.toUpperCase().slice(0, 3);
+    svg.appendChild(label);
+
+    const val = document.createElementNS(NS, 'text');
+    val.setAttribute('x', lx);
+    val.setAttribute('y', ly + 7);
+    val.setAttribute('text-anchor', 'middle');
+    val.setAttribute('fill', 'var(--gold)');
+    val.setAttribute('font-family', 'Courier New, monospace');
+    val.setAttribute('font-size', '11');
+    val.setAttribute('font-weight', '600');
+    val.textContent = stats[p.key];
+    svg.appendChild(val);
+
+    // Dot at actual point
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', pathPoints[i][0]);
+    dot.setAttribute('cy', pathPoints[i][1]);
+    dot.setAttribute('r', '3');
+    dot.setAttribute('fill', 'var(--gold)');
+    svg.appendChild(dot);
+  });
+}
+
+/** Reset adventure to setup state. Preserves legacyChain unless fullReset is true. */
+function resetAdventure(fullReset = false) {
+  const preservedLegacy = fullReset ? [] : (AppState.adventure.legacyChain || []);
   AppState.adventure = {
     active: false, chapter: 0, playerName: '', playerFaction: null,
-    playerOrigin: null, playerBg: '', factionStanding: {},
-    currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
+    playerOrigin: null, playerBg: '', playerArchetype: null,
+    factionStanding: {}, currentRegion: null, history: [],
+    currentChoices: [], worldImpacts: [], legacyChain: preservedLegacy,
   };
   AppState.adventureInventory = {
     items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
@@ -1532,8 +1686,9 @@ async function beginAdventure() {
   const W   = AppState.world;
   const adv = AppState.adventure;
 
-  if (!adv.playerFaction) { showToast('Choose your faction first.'); return; }
-  if (!adv.playerOrigin)  { showToast('Choose your origin region first.'); return; }
+  if (!adv.playerFaction)   { showToast('Choose your faction first.'); return; }
+  if (!adv.playerOrigin)    { showToast('Choose your origin region first.'); return; }
+  if (!adv.playerArchetype) { showToast('Choose your archetype first.'); return; }
 
   // Collect name and background from inputs
   adv.playerName = $('advPlayerName')?.value.trim() || '';
@@ -1547,12 +1702,14 @@ async function beginAdventure() {
     adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
   });
 
-  // Reset inventory / health for new adventure
+  // Max health gets a small bonus from strength attribute
+  const strengthBonus = Math.round((adv.playerArchetype.stats.strength - 25) / 2);
+  const maxHealth = Math.max(50, Math.min(150, 100 + strengthBonus));
   AppState.adventureInventory = {
-    items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
+    items: [], health: maxHealth, maxHealth, keyInsights: [], achievements: [],
   };
 
-  // Switch panels — hide setup overlay, show game
+  // Switch panels
   const setup = $('advSetup'), game = $('advGame');
   if (setup) setup.style.display = 'none';
   if (game)  game.classList.add('visible');
@@ -1561,7 +1718,79 @@ async function beginAdventure() {
   renderFactionStandings();
   renderAdventureHealth();
   renderAdventureInventory();
+
+  // Generate 2 starter items specific to this character before the story begins
+  await generateStarterItems();
+
+  // Then open the first scene
   await generateAdventureScene('OPENING', null);
+}
+
+/**
+ * Ask the Oracle to create 2 starter items specific to archetype + faction + origin.
+ * Each item includes description, history, and what it's useful for.
+ */
+async function generateStarterItems() {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  $('advNarrative').innerHTML = '<div class="adv-loading">The Oracle gathers what you carry into this story…</div>';
+
+  try {
+    const raw = await callApi(
+      `For an adventure in "${W.worldName}" (${W.genre}), generate 2 STARTING items for this character:
+Archetype: ${adv.playerArchetype.label} (${adv.playerArchetype.description})
+Faction: ${adv.playerFaction.name} (${adv.playerFaction.type || 'unknown type'}) — motivation: ${adv.playerFaction.motivation || 'unknown'}
+Origin: ${adv.playerOrigin.name} (${adv.playerOrigin.type || 'unknown terrain'})
+${adv.playerBg ? `Personal detail: ${adv.playerBg}` : ''}
+
+The items must be SPECIFIC to this character's background — not generic. Include one practical item and one meaningful/personal item.
+
+Return ONLY valid JSON:
+{
+  "items": [
+    {
+      "name": "Specific named item (not generic)",
+      "description": "1-2 sentences about what it looks like and its basic use",
+      "history": "1-2 sentences about where it came from or what happened to its previous owner",
+      "usefulFor": "1 sentence about specific situations where it helps"
+    },
+    {
+      "name": "...",
+      "description": "...",
+      "history": "...",
+      "usefulFor": "..."
+    }
+  ]
+}`,
+      { maxTokens: 600 }
+    );
+
+    const data = parseJsonResponse(raw);
+    const items = Array.isArray(data.items) ? data.items : [];
+
+    items.slice(0, 2).forEach((it) => {
+      if (!it.name) return;
+      AppState.adventureInventory.items.push({
+        name:            String(it.name),
+        description:     String(it.description || ''),
+        history:         String(it.history || ''),
+        usefulFor:       String(it.usefulFor || ''),
+        obtainedChapter: 0,
+        isStarter:       true,
+      });
+    });
+
+    renderAdventureInventory();
+  } catch (err) {
+    // If item generation fails, insert generic fallbacks so game continues
+    AppState.adventureInventory.items.push(
+      { name: 'Traveler\'s Pack',  description: 'A worn leather pack with basic supplies.', history: 'You\'ve carried it since leaving home.', usefulFor: 'Long journeys and storing what you find.', obtainedChapter: 0, isStarter: true },
+      { name: 'Personal Token',    description: 'A keepsake from your past.',                history: 'Given to you by someone who mattered.',   usefulFor: 'Reminding you who you are.',                   obtainedChapter: 0, isStarter: true }
+    );
+    renderAdventureInventory();
+    diagLog('warn', `Starter items fallback used: ${err.message}`);
+  }
 }
 
 /** Render the health bar */
@@ -1582,7 +1811,7 @@ function renderAdventureHealth() {
     </div>`;
 }
 
-/** Render the inventory list */
+/** Render the inventory list — items are clickable to see full details */
 function renderAdventureInventory() {
   const inv = AppState.adventureInventory;
   const container = $('advInventory');
@@ -1599,11 +1828,11 @@ function renderAdventureInventory() {
   let html = '';
   if (hasItems) {
     html += `<div class="adv-inv-head">Inventory</div>`;
-    html += `<div class="adv-inv-items">${inv.items.map(item => `
-      <div class="adv-inv-item" title="${esc(item.description || '')}">
+    html += `<div class="adv-inv-items">${inv.items.map((item, i) => `
+      <div class="adv-inv-item" data-item-idx="${i}">
         <span class="adv-inv-icon">◆</span>
         <span class="adv-inv-name">${esc(item.name)}</span>
-        <span class="adv-inv-chapter">Ch.${item.obtainedChapter || '?'}</span>
+        <span class="adv-inv-chapter">${item.isStarter ? 'Starter' : `Ch.${item.obtainedChapter || '?'}`}</span>
       </div>`).join('')}</div>`;
   }
   if (hasInsights) {
@@ -1612,6 +1841,50 @@ function renderAdventureInventory() {
       <div class="adv-inv-insight" title="${esc(ins.text)}">☽ ${esc(ins.text)}</div>`).join('')}</div>`;
   }
   container.innerHTML = html;
+
+  // Wire click handlers — show full item details in modal
+  container.querySelectorAll('.adv-inv-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.itemIdx, 10);
+      const item = inv.items[idx];
+      if (item) showItemDetail(item, false);
+    });
+  });
+}
+
+/**
+ * Show the full item detail modal.
+ * @param {object} item - the inventory item
+ * @param {boolean} isNewlyAcquired - true to show "Item Found" messaging
+ */
+function showItemDetail(item, isNewlyAcquired = false) {
+  $('itemDetailTitle').textContent = isNewlyAcquired ? 'Item Found' : item.name;
+  $('itemDetailSub').textContent   = isNewlyAcquired ? item.name : '';
+
+  const body = $('itemDetailBody');
+  let html = '';
+  if (item.description) {
+    html += `<div class="item-modal-section">
+      <div class="item-modal-label">Description</div>
+      <p>${esc(item.description)}</p>
+    </div>`;
+  }
+  if (item.history) {
+    html += `<div class="item-modal-section">
+      <div class="item-modal-label">History</div>
+      <p>${esc(item.history)}</p>
+    </div>`;
+  }
+  if (item.usefulFor) {
+    html += `<div class="item-modal-section">
+      <div class="item-modal-label">Useful For</div>
+      <p>${esc(item.usefulFor)}</p>
+    </div>`;
+  }
+  if (!html) html = '<p class="adv-empty">No details recorded for this item.</p>';
+  body.innerHTML = html;
+
+  openModal('itemDetailModal');
 }
 
 /** Render the character identity card */
@@ -1706,48 +1979,57 @@ async function generateAdventureScene(sceneType, prevChoice) {
     const inv = AppState.adventureInventory;
     const invSummary = inv.items.length ? inv.items.map(i => i.name).join(', ') : 'empty-handed';
     const healthStr  = `${inv.health}/${inv.maxHealth}`;
+    const archStr    = adv.playerArchetype
+      ? `${adv.playerArchetype.label} (Str:${adv.playerArchetype.stats.strength}, Int:${adv.playerArchetype.stats.intelligence}, Dex:${adv.playerArchetype.stats.dexterity}, Spd:${adv.playerArchetype.stats.speed})`
+      : 'unknown';
 
     const raw = await callApi(
-      `You are a masterful narrator for the world of "${W.worldName}" (${W.genre}).
+      `You are a narrator for "${W.worldName}" (${W.genre}).
 
 WORLD LORE: ${buildWorldContext()}
 ${simState}
 
 PLAYER: ${playerCtx}
+ARCHETYPE: ${archStr}
 HEALTH: ${healthStr}    INVENTORY: ${invSummary}
 FACTION RELATIONS: ${standingCtx}
 STORY HISTORY: ${historyCtx || 'This is the beginning.'}
 
 SCENE TYPE: ${sceneInstruction}
 
-CRITICAL RULES:
-- Every scene must reference at least one SPECIFIC named element from the world lore
-- Choices must be grounded in the world — not generic fantasy tropes
-- The player's faction background should affect how NPCs treat them
-- Keep narrative to 3-4 rich paragraphs
-- If the player carries items or knows insights, reference them when relevant
-- Health changes matter — a wound, a near-miss, a healing moment — only when the scene warrants it
-- Items should be specific and memorable (not "sword" but "Branded Signet of the Shattered Oath")
+WRITING STYLE — CRITICAL:
+- Use clear, accessible language. Short sentences. Active voice.
+- Avoid flowery prose, obscure metaphors, and overwrought vocabulary.
+- Keep paragraphs SHORT — 2-3 sentences each, max 4.
+- If you use a lore term for the first time, briefly anchor it ("the Iron Throne — the ruling empire of the eastern lands").
+- Make the scene READ EASILY. The player should understand what's happening without rereading.
+
+CONTENT RULES:
+- Reference at least one named element from the world lore
+- The player's archetype should shape choices (a Warrior sees different options than a Scholar)
+- If the player has items that fit the situation, offer a choice that uses them
+- Choices should have clear consequences — the hint text tells the player what to expect
+- Item gained: only when the scene genuinely provides one. Not every scene.
 
 Return ONLY valid JSON:
 {
-  "sceneTitle": "Short evocative title",
-  "narrative": "3-4 paragraphs separated by \\n\\n. Specific, atmospheric.",
-  "location": "Current region or place name",
+  "sceneTitle": "Short title, 3-6 words",
+  "narrative": "3-5 SHORT paragraphs separated by \\n\\n",
+  "location": "region name",
   "choices": [
-    {"id":"a","text":"Specific action","consequence":"hint","affectsFaction":"name or null","standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
+    {"id":"a","text":"Clear action in plain language","consequence":"What might happen","affectsFaction":"name or null","standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
     {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
     {"id":"c","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
     {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null}
   ],
-  "worldPulse": "One sentence about something happening in the wider world (optional)"
+  "worldPulse": "One sentence about wider world (optional)"
 }
 
-itemGained: null OR {"name":"specific item name","description":"what it does or means"}
-itemLost: null OR the name string of an item already in inventory
-insightGained: null OR "a short piece of world knowledge the player now understands"
-healthChange: integer from -30 to +20, or 0 for no change`,
-      { maxTokens: 1200 }
+itemGained: null OR {"name":"specific name","description":"1-2 sentences","history":"1-2 sentences about its origin","usefulFor":"1 sentence on situations where it helps"}
+itemLost: null OR the name of an item already in inventory
+insightGained: null OR "a short piece of world knowledge"
+healthChange: integer from -30 to +20, or 0`,
+      { maxTokens: 1300 }
     );
 
     const scene = parseJsonResponse(raw);
@@ -1821,12 +2103,18 @@ async function makeAdventureChoice(choiceId) {
     else                          toastLines.push(`+${choice.healthChange} Health`);
   }
   if (choice.itemGained && choice.itemGained.name) {
-    inv.items.push({
-      name:              String(choice.itemGained.name),
-      description:       String(choice.itemGained.description || ''),
-      obtainedChapter:   adv.chapter - 1,
-    });
+    const newItem = {
+      name:            String(choice.itemGained.name),
+      description:     String(choice.itemGained.description || ''),
+      history:         String(choice.itemGained.history || ''),
+      usefulFor:       String(choice.itemGained.usefulFor || ''),
+      obtainedChapter: adv.chapter - 1,
+      isStarter:       false,
+    };
+    inv.items.push(newItem);
     toastLines.push(`◆ Acquired: ${choice.itemGained.name}`);
+    // Defer the item-found modal to after the scene transition so it feels like a reveal
+    setTimeout(() => showItemDetail(newItem, true), 1200);
   }
   if (choice.itemLost && typeof choice.itemLost === 'string') {
     const idx = inv.items.findIndex(i => i.name === choice.itemLost);
@@ -1883,22 +2171,52 @@ async function makeAdventureChoice(choiceId) {
   await generateAdventureScene('CONTINUATION', choice.text);
 }
 
-/** Handle the player's story ending when health reaches zero */
+/**
+ * When health hits zero — show the choice modal: end story or continue as legacy character.
+ * The old auto-epitaph is now only shown if the user picks "End the Story".
+ */
 async function handlePlayerDeath() {
+  const adv = AppState.adventure;
+  const sub = $('deathSubtitle');
+  if (sub) {
+    sub.textContent = `${adv.playerName || 'Your character'} has fallen in ${adv.currentRegion || 'an unknown place'} after ${adv.chapter - 1} chapter${adv.chapter - 1 === 1 ? '' : 's'}.`;
+  }
+
+  // Wire up the two death choice buttons
+  $('btnDeathEnd').onclick    = () => { closeModal('deathChoiceModal'); showEndingEpitaph(); };
+  $('btnDeathLegacy').onclick = () => { closeModal('deathChoiceModal'); startLegacyAdventure(); };
+
+  openModal('deathChoiceModal');
+}
+
+/** The player chose to end the story — show the final epitaph */
+async function showEndingEpitaph() {
   const W   = AppState.world;
   const adv = AppState.adventure;
 
   $('advNarrative').innerHTML = '<div class="adv-loading">Your story reaches its end…</div>';
   $('advChoices').innerHTML   = '';
 
+  // Archive this character into the legacy chain for future reference
+  adv.legacyChain = adv.legacyChain || [];
+  adv.legacyChain.push({
+    name:           adv.playerName || 'The Wanderer',
+    faction:        adv.playerFaction?.name || '',
+    origin:         adv.playerOrigin?.name || '',
+    archetype:      adv.playerArchetype?.label || '',
+    chapters:       adv.chapter - 1,
+    deathRegion:    adv.currentRegion || '',
+    finalItems:     (AppState.adventureInventory.items || []).map(i => i.name),
+  });
+
   try {
     const recent = adv.history.slice(-3).map(h => h.choiceText).join(' → ');
     const raw = await callApi(
-      `Write a 2-3 paragraph ending for the story of ${adv.playerName || 'the wanderer'} in "${W.worldName}".
-They fell in ${adv.currentRegion}. They were a member of ${adv.playerFaction?.name}, born in ${adv.playerOrigin?.name}.
+      `Write a 2-3 paragraph ending for ${adv.playerName || 'the wanderer'}'s story in "${W.worldName}".
+They fell in ${adv.currentRegion}. A ${adv.playerArchetype?.label || 'traveler'} of ${adv.playerFaction?.name}, born in ${adv.playerOrigin?.name}.
 Recent actions: ${recent || 'a short but meaningful journey'}.
-Make it atmospheric, specific to the world's lore, and meaningful — not just "you died." Honor the character's arc.
-Return ONLY plain text, no JSON, no preamble.`,
+Write in CLEAR, accessible language. Short sentences. Specific to the world's lore. Honor the character's arc.
+Return ONLY plain text, no JSON.`,
       { maxTokens: 500 }
     );
     const epitaph = raw.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p)}</p>`).join('');
@@ -1917,11 +2235,78 @@ Return ONLY plain text, no JSON, no preamble.`,
 
   $('advChoices').innerHTML = `<button class="btn-forge" id="btnAdvRestartFromEnd">✦ Begin a New Story</button>`;
   $('btnAdvRestartFromEnd')?.addEventListener('click', () => {
-    resetAdventure();
+    resetAdventure(false);  // keep legacy chain
     setNav('dnd');
   });
   adv.active = false;
   saveCurrentWorld();
+}
+
+/**
+ * The player chose to continue as a legacy character.
+ * Their heir inherits: same faction, partial faction standings, one starter item
+ * from the fallen predecessor. They start with a fresh archetype choice.
+ */
+function startLegacyAdventure() {
+  const adv = AppState.adventure;
+  const predecessor = {
+    name:           adv.playerName || 'The Wanderer',
+    faction:        adv.playerFaction?.name || '',
+    origin:         adv.playerOrigin?.name || '',
+    archetype:      adv.playerArchetype?.label || '',
+    chapters:       adv.chapter - 1,
+    deathRegion:    adv.currentRegion || '',
+    finalItems:     (AppState.adventureInventory.items || []).slice(),
+  };
+
+  // Archive into legacy chain
+  adv.legacyChain = adv.legacyChain || [];
+  adv.legacyChain.push({
+    name:         predecessor.name,
+    faction:      predecessor.faction,
+    origin:       predecessor.origin,
+    archetype:    predecessor.archetype,
+    chapters:     predecessor.chapters,
+    deathRegion:  predecessor.deathRegion,
+    finalItems:   predecessor.finalItems.map(i => i.name),
+  });
+
+  // Preserve the faction (the heir inherits it) and some faction standings at half strength
+  const inheritedFaction   = adv.playerFaction;
+  const inheritedStandings = {};
+  Object.entries(adv.factionStanding || {}).forEach(([k, v]) => {
+    inheritedStandings[k] = Math.round(v * 0.5);
+  });
+
+  // Inherit one random item from the predecessor (their "keepsake")
+  const inheritedItem = predecessor.finalItems.length
+    ? predecessor.finalItems[Math.floor(Math.random() * predecessor.finalItems.length)]
+    : null;
+
+  // Reset for new character but preserve inherited state
+  const preservedLegacy = adv.legacyChain;
+  AppState.adventure = {
+    active: false, chapter: 0, playerName: '', playerFaction: inheritedFaction,
+    playerOrigin: null, playerBg: '', playerArchetype: null,
+    factionStanding: inheritedStandings,
+    currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
+    legacyChain: preservedLegacy,
+    // Legacy-specific fields — flagged so beginAdventure can reference them
+    _inheritedFrom: predecessor.name,
+    _inheritedItem: inheritedItem,
+  };
+  AppState.adventureInventory = {
+    items:       inheritedItem ? [{ ...inheritedItem, obtainedChapter: 0, isStarter: true }] : [],
+    health:      100,
+    maxHealth:   100,
+    keyInsights: [],
+    achievements: [],
+  };
+
+  showToast(`${predecessor.name}'s legacy continues. You inherit their faction${inheritedItem ? ` and their ${inheritedItem.name}` : ''}.`);
+
+  // Go back to setup — user picks new origin and archetype
+  showAdventureSetup();
 }
 
 /** Panel content for adventure mode */
@@ -1931,17 +2316,45 @@ function updatePanelAdventure() {
   $('panelSub').textContent   = `Chapter ${adv.chapter}`;
 
   if (!adv.active) {
-    $('panelScroll').innerHTML = '<div class="placeholder-msg">Set up your character to begin.</div>';
+    // If there's a legacy chain, show it as inspiration
+    const legacy = adv.legacyChain || [];
+    let html = '<div class="placeholder-msg">Set up your character to begin.</div>';
+    if (legacy.length) {
+      html += `<div style="padding:.85rem 1rem 0">
+        <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Legacy Chain</div>
+        ${legacy.slice(-5).reverse().map(l => `
+          <div style="font-size:.75rem;color:var(--faint);padding:.35rem 0;border-bottom:1px solid var(--bord-f)">
+            <div style="color:var(--parch-dim)">${esc(l.name)}</div>
+            <div style="font-style:italic;margin-top:.1rem">${esc(l.archetype || '')} · ${l.chapters} chapters · fell in ${esc(l.deathRegion || 'unknown')}</div>
+          </div>`).join('')}
+      </div>`;
+    }
+    $('panelScroll').innerHTML = html;
     $('panelFooter').innerHTML = '';
     return;
   }
 
   const standings = Object.entries(adv.factionStanding);
+  const arch = adv.playerArchetype;
+
   $('panelScroll').innerHTML = `
     <div style="padding:.65rem 1rem">
       <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Character</div>
-      <div style="font-size:.85rem;color:var(--parch-dim);margin-bottom:.2rem">${esc(adv.playerName || 'The Wanderer')}</div>
-      <div style="font-size:.75rem;color:var(--faint);font-style:italic;margin-bottom:.85rem">${esc(adv.playerFaction?.name || '')} · ${esc(adv.playerOrigin?.name || '')}</div>
+      <div style="font-size:.85rem;color:var(--parch-dim);margin-bottom:.1rem">${esc(adv.playerName || 'The Wanderer')}</div>
+      <div style="font-size:.72rem;color:var(--faint);font-style:italic;margin-bottom:.5rem">
+        ${arch ? `${arch.icon} ${esc(arch.label)} · ` : ''}${esc(adv.playerFaction?.name || '')} · from ${esc(adv.playerOrigin?.name || '')}
+      </div>
+      ${adv._inheritedFrom ? `<div style="font-size:.7rem;color:var(--gold-dim);font-style:italic;margin-bottom:.5rem">☽ Heir of ${esc(adv._inheritedFrom)}</div>` : ''}
+
+      ${arch ? `
+        <div style="font-family:var(--fd);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.3rem">Attributes</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.2rem;font-size:.7rem;color:var(--parch-dim);margin-bottom:.85rem">
+          <div>Str: <strong style="color:var(--gold)">${arch.stats.strength}</strong></div>
+          <div>Int: <strong style="color:var(--gold)">${arch.stats.intelligence}</strong></div>
+          <div>Dex: <strong style="color:var(--gold)">${arch.stats.dexterity}</strong></div>
+          <div>Spd: <strong style="color:var(--gold)">${arch.stats.speed}</strong></div>
+        </div>
+      ` : ''}
 
       <div style="font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:.4rem">Location</div>
       <div style="font-size:.82rem;color:var(--parch-dim);margin-bottom:.85rem">${esc(adv.currentRegion || '—')}</div>
@@ -1953,6 +2366,12 @@ function updatePanelAdventure() {
           return `<div style="display:flex;justify-content:space-between;font-size:.72rem;color:${color};margin-bottom:.2rem"><span>${esc(name.slice(0,16))}</span><span>${val > 0 ? '+' : ''}${val}</span></div>`;
         }).join('')}
       ` : ''}
+
+      ${(adv.legacyChain || []).length ? `
+        <div style="font-family:var(--fd);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-dim);margin-top:.85rem;margin-bottom:.3rem">Legacy (${adv.legacyChain.length})</div>
+        ${adv.legacyChain.slice(-3).reverse().map(l => `
+          <div style="font-size:.68rem;color:var(--faint);padding:.2rem 0">◆ ${esc(l.name)} · ${l.chapters}ch</div>`).join('')}
+      ` : ''}
     </div>`;
 
   $('panelFooter').innerHTML = `
@@ -1960,8 +2379,8 @@ function updatePanelAdventure() {
   $('btnAdvOracle')?.addEventListener('click', () => {
     const recent = adv.history.slice(-1)[0];
     const q = recent
-      ? `I'm playing as ${adv.playerName || 'a traveler'} from ${adv.playerFaction?.name}. I just chose "${recent.choiceText}". What might happen next in ${adv.currentRegion}?`
-      : `I'm playing as ${adv.playerName || 'a traveler'} from ${adv.playerFaction?.name}, starting in ${adv.playerOrigin?.name}. What should I expect?`;
+      ? `I'm playing as ${adv.playerName || 'a traveler'} (${adv.playerArchetype?.label || ''}) from ${adv.playerFaction?.name}. I just chose "${recent.choiceText}". What might happen next in ${adv.currentRegion}?`
+      : `I'm playing as ${adv.playerName || 'a traveler'} (${adv.playerArchetype?.label || ''}) from ${adv.playerFaction?.name}, starting in ${adv.playerOrigin?.name}. What should I expect?`;
     $('chatInput').value = q;
     setNav('oracle');
     sendChat();
@@ -2339,33 +2758,41 @@ function bindEvents() {
     });
   });
 
-  // Login / register
-  $('btnLogin').addEventListener('click',()=>{
-    const u=$('loginUsername').value.trim(),p=$('loginPassword').value,k=$('loginApiKey').value.trim();
-    $('loginError').textContent='';
-    if(!u||!p){$('loginError').textContent='Enter username and password.';return;}
-    const r=loginUser(u,p);
-    if(!r.ok){$('loginError').textContent=r.error;return;}
-    if(k) saveApiKey(k);
-    loadHub();
-  });
-  $('btnRegister').addEventListener('click',()=>{
-    const u=$('regUsername').value.trim(),p=$('regPassword').value,k=$('regApiKey').value.trim();
-    $('registerError').textContent='';
-    if(!u||!p){$('registerError').textContent='Enter username and password.';return;}
-    if(p.length<4){$('registerError').textContent='Password needs 4+ characters.';return;}
-    const r=registerUser(u,p);
-    if(!r.ok){$('registerError').textContent=r.error;return;}
-    loginUser(u,p); if(k) saveApiKey(k); loadHub();
-  });
-  // Enter key on login
-  [$('loginUsername'),$('loginPassword'),$('loginApiKey')].forEach(el=>{
+  // Enter key on login form
+  [$('loginUsername'),$('loginPassword')].forEach(el=>{
     el?.addEventListener('keydown',e=>{if(e.key==='Enter')$('btnLogin').click();});
+  });
+  [$('regUsername'),$('regPassword')].forEach(el=>{
+    el?.addEventListener('keydown',e=>{if(e.key==='Enter')$('btnRegister').click();});
+  });
+
+  // API Key settings modal
+  $('btnApiKeySettings')?.addEventListener('click', openApiKeyModal);
+  $('btnApiKeyCancel')?.addEventListener('click', () => closeModal('apiKeyModal'));
+  $('btnApiKeySave')?.addEventListener('click', () => {
+    const val = $('apiKeyInput').value.trim();
+    if (!val) { showToast('Enter a key or cancel.'); return; }
+    if (!val.startsWith('sk-ant-')) {
+      if (!confirm('That does not look like an Anthropic API key (sk-ant-…). Save it anyway?')) return;
+    }
+    saveApiKey(val);
+    closeModal('apiKeyModal');
+    // Hide hub banner
+    const banner = $('hubApiBanner');
+    if (banner) banner.style.display = 'none';
+    showToast('API key saved.');
+  });
+  $('apiKeyInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('btnApiKeySave')?.click();
   });
 
   // Hub
   $('btnLogout').addEventListener('click',()=>{logoutUser();showScreen('login');});
-  $('btnNewWorld').addEventListener('click',()=>startInterview());
+  $('btnNewWorld').addEventListener('click',()=>{
+    // Require API key before world creation
+    if (!loadApiKey()) { openApiKeyModal(); showToast('Set your API key first.'); return; }
+    startInterview();
+  });
   $('btnImportWorld').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',e=>{if(e.target.files[0])importWorldFile(e.target.files[0]);e.target.value='';});
 
@@ -2460,7 +2887,89 @@ function bindEvents() {
   // Adventure Mode
   $('btnDndToggle').addEventListener('click', () => setNav('dnd'));
   $('btnAdvBegin')?.addEventListener('click', beginAdventure);
-  $('btnAdvRestart')?.addEventListener('click', () => { resetAdventure(); setNav('dnd'); });
+  $('btnAdvRestart')?.addEventListener('click', () => { resetAdventure(true); setNav('dnd'); });
+
+  // Adventure mid-run save
+  $('btnAdvSave')?.addEventListener('click', () => {
+    if (!AppState.adventure.active) { showToast('No active adventure to save.'); return; }
+    const label = prompt('Name this save point (or leave blank):', `Chapter ${AppState.adventure.chapter}`);
+    if (label === null) return;  // user cancelled
+    const result = saveAdventureState(label.trim() || `Chapter ${AppState.adventure.chapter}`);
+    showToast(result.ok ? `Saved: ${label || 'Chapter ' + AppState.adventure.chapter}` : `Save failed: ${result.error}`);
+  });
+
+  // Adventure load — show list modal
+  $('btnAdvLoad')?.addEventListener('click', () => {
+    const saves = getAdventureSaves();
+    const list = $('advLoadList');
+    if (!saves.length) {
+      list.innerHTML = '<div class="adv-empty-note">No saved adventures for this world yet.</div>';
+    } else {
+      list.innerHTML = saves.map((s, i) => `
+        <div class="adv-load-row">
+          <div class="adv-load-info">
+            <div class="adv-load-label">${esc(s.label)}</div>
+            <div class="adv-load-meta">
+              ${esc(s.adventure.playerName || 'Unnamed')} · ${esc(s.adventure.playerArchetype?.label || '')} ·
+              Ch.${s.adventure.chapter} · ${new Date(s.savedAt).toLocaleString()}
+            </div>
+          </div>
+          <div class="adv-load-actions">
+            <button class="btn-sm adv-load-btn" data-load-idx="${i}">▷ Load</button>
+            <button class="btn-sm adv-load-del" data-del-idx="${i}" title="Delete">✕</button>
+          </div>
+        </div>`).join('');
+
+      list.querySelectorAll('.adv-load-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.loadIdx, 10);
+          const r = loadAdventureSave(idx);
+          if (r.ok) {
+            closeModal('advLoadModal');
+            const setup = $('advSetup'), game = $('advGame');
+            if (setup) setup.style.display = 'none';
+            if (game)  game.classList.add('visible');
+            renderAdventureCharacterCard();
+            renderFactionStandings();
+            renderAdventureHealth();
+            renderAdventureInventory();
+            $('advChapterBadge').textContent = `Chapter ${AppState.adventure.chapter}`;
+            // Rebuild journey log
+            const logEl = $('advLog');
+            if (logEl) {
+              logEl.innerHTML = (AppState.adventure.history || []).map(h => `
+                <div class="adv-log-entry">
+                  <div class="adv-log-chapter">Chapter ${h.chapter}</div>
+                  <div class="adv-log-choice">→ ${esc(h.choiceText)}</div>
+                </div>`).join('');
+            }
+            // Re-open the current scene by continuing from last choice
+            const lastChoice = AppState.adventure.history.slice(-1)[0]?.choiceText;
+            generateAdventureScene('CONTINUATION', lastChoice || 'The story resumes.');
+            showToast('Adventure loaded.');
+          } else {
+            showToast(`Load failed: ${r.error}`);
+          }
+        });
+      });
+
+      list.querySelectorAll('.adv-load-del').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (!confirm('Delete this save?')) return;
+          deleteAdventureSave(parseInt(btn.dataset.delIdx, 10));
+          $('btnAdvLoad').click();  // refresh the list
+        });
+      });
+    }
+    openModal('advLoadModal');
+  });
+  $('btnAdvLoadClose')?.addEventListener('click', () => closeModal('advLoadModal'));
+
+  // Item detail modal
+  $('btnItemDetailClose')?.addEventListener('click', () => closeModal('itemDetailModal'));
+  $('itemDetailModal')?.addEventListener('click', e => {
+    if (e.target.id === 'itemDetailModal') closeModal('itemDetailModal');
+  });
 
   // Oracle
   $('chatSendBtn').addEventListener('click',sendChat);
@@ -2517,24 +3026,9 @@ function boot() {
   initDiagnostics();
   bindEvents();
 
-  // Pre-fill API key if saved
-  const savedKey=loadApiKey();
-  if(savedKey){
-    const el=$('loginApiKey'); if(el) el.value=savedKey;
-  }
-
   // Try to restore session
   if(restoreSession()) {
-    const user=AppState.currentUser;
-    // Check if they had an active world
-    const saves=getUserSaves(user.username);
-    const recent=Object.entries(saves).sort((a,b)=>b[1].savedAt-a[1].savedAt)[0];
-    if(recent){
-      // Auto-load most recent world and go to hub
-      loadHub();
-    } else {
-      loadHub();
-    }
+    loadHub();
   } else {
     showScreen('login');
   }

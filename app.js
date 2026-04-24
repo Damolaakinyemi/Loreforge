@@ -16,7 +16,28 @@ import {
   saveInterviewProgress, loadInterviewProgress, clearInterviewProgress,
   saveOracleChat, loadOracleChat, clearOracleChat,
 } from './state.js';
-import {callApi,parseJsonResponse,ApiError} from './apiService.js';
+import {callApi as _callApi, parseJsonResponse, ApiError} from './apiService.js';
+
+/** Wrapped callApi that tracks invocation count for cost awareness */
+async function callApi(prompt, options = {}) {
+  AppState.ui.apiCallCount = (AppState.ui.apiCallCount || 0) + 1;
+  updateApiBadge();
+  try {
+    return await _callApi(prompt, options);
+  } catch (err) {
+    // Don't decrement — failed calls still cost
+    throw err;
+  }
+}
+
+/** Update the API call counter badge in the toolbar */
+function updateApiBadge() {
+  const el = $('apiBadge');
+  if (!el) return;
+  const count = AppState.ui.apiCallCount || 0;
+  el.textContent = `⚡ ${count}`;
+  el.title = `${count} API calls this session (rough estimate of Anthropic usage)`;
+}
 import {initDiagnostics,diagLog,recordDiagError,runScan,executeRepairs,openDiag,closeDiag,toggleDiag} from './diagnostics.js';
 import {renderIllustratedMap,renderMiniMap} from './map.js';
 
@@ -902,13 +923,33 @@ Return ONLY a JSON array, one object per region: {"name":"exact name","x":300,"y
 }
 
 function initNovaState() {
-  const W=AppState.world;
-  AppState.nova={year:0,running:false,events:[],intervalId:null,regionState:{}};
-  (W.regions||[]).forEach(r=>{
-    AppState.nova.regionState[r.name]={
-      power:40+Math.floor(Math.random()*40),
-      stability:40+Math.floor(Math.random()*40),
-      population:30+Math.floor(Math.random()*50),
+  const W = AppState.world;
+  AppState.nova = {
+    year: 0,
+    running: false,
+    events: [],
+    intervalId: null,
+    regionState: {},
+    factionState: {},
+    epoch: 'Age of Dawn',
+    epochEvents: 0,
+    pendingConsequences: [],
+    worldThemes: [],
+  };
+  (W.regions || []).forEach(r => {
+    AppState.nova.regionState[r.name] = {
+      power:      40 + Math.floor(Math.random() * 40),
+      stability:  40 + Math.floor(Math.random() * 40),
+      population: 30 + Math.floor(Math.random() * 50),
+      trend:      'steady',   // 'rising' | 'falling' | 'steady'
+      lastChange: 0,
+    };
+  });
+  (W.factions || []).forEach(f => {
+    AppState.nova.factionState[f.name] = {
+      influence:  40 + Math.floor(Math.random() * 30),
+      territory:  [],
+      reputation: 50,
     };
   });
 }
@@ -966,13 +1007,29 @@ function handleCitationClick(e) {
    MAP
 ════════════════════════════════════════════════ */
 function renderMap() {
-  if(!hasWorld()) return;
-  renderIllustratedMap('worldMap',AppState.world,AppState.nova,regionName=>openRegionModal(regionName));
+  if (!hasWorld()) return;
+  renderIllustratedMap(
+    'worldMap',
+    AppState.world,
+    AppState.nova,
+    regionName => openRegionModal(regionName),
+    AppState.ui.mapOverlay || 'illustrated'
+  );
 }
 
 function renderMiniMapView() {
-  if(!hasWorld()) return;
-  renderMiniMap('novaMap',AppState.world,AppState.nova);
+  if (!hasWorld()) return;
+  renderMiniMap('novaMap', AppState.world, AppState.nova);
+}
+
+/** Switch map overlay mode and re-render */
+function setMapOverlay(mode) {
+  if (!['illustrated', 'political', 'stability'].includes(mode)) return;
+  AppState.ui.mapOverlay = mode;
+  document.querySelectorAll('.map-pill').forEach(p => {
+    p.classList.toggle('active', p.dataset.overlay === mode);
+  });
+  renderMap();
 }
 
 /* ════════════════════════════════════════════════
@@ -1080,52 +1137,207 @@ function renderNovaInterventions() {
 }
 
 async function runSimStep() {
-  if(!hasWorld()) return;
-  const W=AppState.world,sim=AppState.nova;
-  sim.year+=Math.floor(5+Math.random()*20);
-  $('novaYear').textContent=`Year ${sim.year}`;
+  if (!hasWorld()) return;
+  const W = AppState.world, sim = AppState.nova;
+  const yearsPassed = Math.floor(5 + Math.random() * 20);
+  sim.year += yearsPassed;
+  sim.epochEvents++;
+  $('novaYear').textContent = `Year ${sim.year}`;
 
-  const regionSummary=(W.regions||[]).map(r=>{const s=sim.regionState[r.name]||{};return `${r.name}(pwr:${s.power||50}%,stab:${s.stability||50}%)`;}).join(', ');
-  const recentEvts=sim.events.slice(-3).map(e=>`Yr${e.year}:${e.text}`).join(' | ');
+  // Build a rich state summary that tells the AI about momentum
+  const regionDetails = (W.regions || []).map(r => {
+    const s = sim.regionState[r.name] || {};
+    const trend = s.trend === 'rising' ? 'RISING' : s.trend === 'falling' ? 'DECLINING' : 'stable';
+    return `${r.name} [power:${s.power || 50}% ${trend}, stab:${s.stability || 50}%]`;
+  }).join(', ');
+
+  // Last 6 events for strong continuity
+  const recentEvts = sim.events.slice(-6).map(e => `Yr${e.year}: ${e.text}`).join(' | ');
+
+  // Identify the most at-risk region for targeted storytelling
+  const weakestRegion = Object.entries(sim.regionState || {})
+    .sort((a, b) => a[1].stability - b[1].stability)[0];
+  const strongestRegion = Object.entries(sim.regionState || {})
+    .sort((a, b) => b[1].power - a[1].power)[0];
+
+  const focusHint = sim.epochEvents < 3
+    ? `This is early in the ${sim.epoch} — establish tone and introduce lingering tensions.`
+    : weakestRegion && weakestRegion[1].stability < 30
+      ? `FOCUS: ${weakestRegion[0]} is near collapse (${weakestRegion[1].stability}% stability). Escalate its crisis.`
+      : strongestRegion && strongestRegion[1].power > 80
+        ? `FOCUS: ${strongestRegion[0]} is dominant (${strongestRegion[1].power}% power). Show the consequences of its rise.`
+        : `Advance existing threads — the recent events MUST have consequences now.`;
 
   try {
-    const raw=await callApi(
-      `You are simulating "${W.worldName}" (${W.genre}). Context: ${buildWorldContext()}
-Year: ${sim.year}. Regions: ${regionSummary}. Recent: ${recentEvts||'none'}.
-Generate ONE significant historical event. Return ONLY JSON:
-{"text":"1-2 sentence event","type":"conflict|alliance|discovery|disaster|golden|neutral","powerDelta":{"regionName":10},"stabilityDelta":{"regionName":-5}}
-powerDelta and stabilityDelta are optional and can be positive or negative integers.`,
-      {maxTokens:300}
+    const raw = await callApi(
+      `You are simulating the civilization history of "${W.worldName}" (${W.genre}).
+
+WORLD LORE: ${buildWorldContext()}
+
+SIMULATION STATE:
+Year ${sim.year} of the ${sim.epoch}. ${sim.epochEvents} events in this epoch.
+Region momentum: ${regionDetails}
+Recent history (chronological): ${recentEvts || 'This is the beginning.'}
+${sim.pendingConsequences?.length ? `Tension threads: ${sim.pendingConsequences.map(c => c.description).join(', ')}` : ''}
+
+DIRECTIVE: ${focusHint}
+
+RULES:
+1. The new event MUST explicitly build on or respond to at least one recent event — reference it directly if possible. No isolated events.
+2. Name specific factions, regions, or characters from the world lore. No generic "a kingdom" or "a warrior."
+3. Power and stability changes must be realistic — usually 3-15 points, rarely more.
+4. If recent events pointed toward war/plague/discovery, follow through now.
+
+Return ONLY valid JSON:
+{
+  "text": "1-2 sentence event that references recent history",
+  "type": "conflict|alliance|discovery|disaster|golden|neutral",
+  "causedBy": "one phrase describing which recent event or trend led to this",
+  "powerDelta": {"regionName": 10, "regionName2": -5},
+  "stabilityDelta": {"regionName": -8},
+  "newTheme": "optional: one-word emerging theme if this is a turning point (e.g. 'betrayal', 'decline', 'awakening') or empty string",
+  "pendingConsequence": "optional: describe an event that should happen within 3-5 more steps as a result of this, or empty string"
+}`,
+      { maxTokens: 400 }
     );
-    const ev=parseJsonResponse(raw); if(!ev.text) return;
+
+    const ev = parseJsonResponse(raw);
+    if (!ev.text) return;
+
     applySimDeltas(ev);
-    sim.events.push({year:sim.year,text:ev.text,type:ev.type||'neutral'});
-    appendNovaEvent({year:sim.year,text:ev.text,type:ev.type||'neutral'});
-    // Oracle proactive guidance every 5 events
-    if(sim.events.length%5===0) novaOracleCheck();
-  } catch(_) {
-    const r=(W.regions||[])[Math.floor(Math.random()*(W.regions||[]).length)];
-    const fb=[`A harsh season grips ${r?.name||'the land'}.`,`Tensions rise along the borders of ${r?.name||'the realm'}.`,`A mysterious wanderer arrives in ${r?.name||'the capital'}.`];
-    const text=fb[Math.floor(Math.random()*fb.length)];
-    sim.events.push({year:sim.year,text,type:'neutral'});
-    appendNovaEvent({year:sim.year,text,type:'neutral'});
+    updateRegionTrends();
+
+    // Record event with metadata
+    sim.events.push({
+      year: sim.year,
+      text: ev.text,
+      type: ev.type || 'neutral',
+      causedBy: ev.causedBy || null,
+    });
+    appendNovaEvent({ year: sim.year, text: ev.text, type: ev.type || 'neutral', causedBy: ev.causedBy });
+
+    // Track emerging themes
+    if (ev.newTheme && ev.newTheme.trim()) {
+      sim.worldThemes.push(ev.newTheme.trim());
+      if (sim.worldThemes.length > 8) sim.worldThemes.shift();
+    }
+
+    // Track pending consequences
+    if (ev.pendingConsequence && ev.pendingConsequence.trim()) {
+      sim.pendingConsequences.push({
+        description: ev.pendingConsequence.trim(),
+        createdYear: sim.year,
+      });
+      if (sim.pendingConsequences.length > 5) sim.pendingConsequences.shift();
+    }
+
+    // Clean up old pending consequences (over 100 years stale)
+    sim.pendingConsequences = sim.pendingConsequences.filter(c => sim.year - c.createdYear < 100);
+
+    // Epoch transition every ~15 events
+    if (sim.epochEvents >= 15) {
+      advanceEpoch();
+    }
+
+    if (sim.events.length % 5 === 0) novaOracleCheck();
+
+  } catch (_) {
+    const r = (W.regions || [])[Math.floor(Math.random() * (W.regions || []).length)];
+    const fb = [
+      `A harsh season grips ${r?.name || 'the land'}.`,
+      `Tensions rise along the borders of ${r?.name || 'the realm'}.`,
+      `A mysterious wanderer arrives in ${r?.name || 'the capital'}.`,
+    ];
+    const text = fb[Math.floor(Math.random() * fb.length)];
+    sim.events.push({ year: sim.year, text, type: 'neutral' });
+    appendNovaEvent({ year: sim.year, text, type: 'neutral' });
   }
-  renderMiniMapView(); renderMap(); updatePanelNova(); saveCurrentWorld();
+
+  renderMiniMapView();
+  renderMap();
+  updatePanelNova();
+  saveCurrentWorld();
+}
+
+/** Update each region's trend based on recent power changes */
+function updateRegionTrends() {
+  const sim = AppState.nova;
+  const recentWindow = 3;
+
+  Object.entries(sim.regionState).forEach(([name, state]) => {
+    // Look at last N events affecting this region
+    const impacts = sim.events
+      .slice(-recentWindow)
+      .filter(e => e.text.toLowerCase().includes(name.toLowerCase().split(' ')[0].slice(0, 5)));
+
+    if (impacts.length >= 2) {
+      const lastChange = state.lastChange || 0;
+      state.trend = lastChange > 5 ? 'rising' : lastChange < -5 ? 'falling' : 'steady';
+    } else {
+      state.trend = 'steady';
+    }
+  });
+}
+
+/** Advance to next epoch when enough events have accumulated */
+async function advanceEpoch() {
+  const sim = AppState.nova;
+  try {
+    const raw = await callApi(
+      `Name the next epoch of this world. Current: "${sim.epoch}". Recent themes: ${sim.worldThemes.slice(-5).join(', ') || 'none'}. Recent events: ${sim.events.slice(-5).map(e => e.text).join(' | ')}.
+Return ONLY JSON: {"epochName":"The Age of X","reason":"one sentence why this era begins now"}`,
+      { maxTokens: 150 }
+    );
+    const e = parseJsonResponse(raw);
+    if (e.epochName) {
+      sim.epoch = e.epochName;
+      sim.epochEvents = 0;
+      // Log the epoch transition as a special event
+      sim.events.push({
+        year: sim.year,
+        text: `━━━ ${e.epochName} begins. ${e.reason || ''} ━━━`,
+        type: 'golden',
+      });
+      appendNovaEvent({
+        year: sim.year,
+        text: `━━━ ${e.epochName} begins. ${e.reason || ''} ━━━`,
+        type: 'golden',
+      });
+    }
+  } catch (_) { /* silent fail, keep current epoch */ }
 }
 
 function applySimDeltas(ev) {
-  const sim=AppState.nova;
-  if(ev.powerDelta) Object.entries(ev.powerDelta).forEach(([r,d])=>{if(sim.regionState[r]) sim.regionState[r].power=Math.max(5,Math.min(100,sim.regionState[r].power+d));});
-  if(ev.stabilityDelta) Object.entries(ev.stabilityDelta).forEach(([r,d])=>{if(sim.regionState[r]) sim.regionState[r].stability=Math.max(5,Math.min(100,sim.regionState[r].stability+d));});
+  const sim = AppState.nova;
+  if (ev.powerDelta) {
+    Object.entries(ev.powerDelta).forEach(([r, d]) => {
+      if (sim.regionState[r]) {
+        const delta = parseInt(d, 10) || 0;
+        sim.regionState[r].power = Math.max(5, Math.min(100, sim.regionState[r].power + delta));
+        sim.regionState[r].lastChange = delta;
+      }
+    });
+  }
+  if (ev.stabilityDelta) {
+    Object.entries(ev.stabilityDelta).forEach(([r, d]) => {
+      if (sim.regionState[r]) {
+        const delta = parseInt(d, 10) || 0;
+        sim.regionState[r].stability = Math.max(5, Math.min(100, sim.regionState[r].stability + delta));
+      }
+    });
+  }
 }
 
 function appendNovaEvent(ev) {
-  const log=$('novaLog'); if(!log) return;
+  const log = $('novaLog');
+  if (!log) return;
   log.querySelector('.nova-empty')?.remove();
-  const div=document.createElement('div');
-  div.className=`nova-event ${ev.type||'neutral'}`;
-  div.innerHTML=`<div class="nova-event-year">Year ${ev.year}</div><div class="nova-event-text">${esc(ev.text)}</div>`;
-  log.appendChild(div); log.scrollTop=log.scrollHeight;
+  const div = document.createElement('div');
+  div.className = `nova-event ${ev.type || 'neutral'}`;
+  const causeHtml = ev.causedBy ? `<div class="nova-event-cause">↳ ${esc(ev.causedBy)}</div>` : '';
+  div.innerHTML = `<div class="nova-event-year">Year ${ev.year}</div><div class="nova-event-text">${esc(ev.text)}</div>${causeHtml}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
 }
 
 /** Oracle proactively surfaces guidance during simulation */
@@ -1220,10 +1432,10 @@ function showAdventureSetup() {
   const W = AppState.world;
   if (!W) return;
 
-  // Show setup, hide game
+  // Show setup overlay, hide game
   const setup = $('advSetup'), game = $('advGame');
-  if (setup) setup.style.display = 'flex';
-  if (game)  game.style.display  = 'none';
+  if (setup) setup.style.display = 'block';
+  if (game)  game.classList.remove('visible');
 
   // Helper: update begin button and status text
   function refreshBeginBtn() {
@@ -1235,13 +1447,11 @@ function showAdventureSetup() {
     if (btn) btn.disabled = !(hasFac && hasReg);
     if (status) {
       if (!hasFac && !hasReg) status.textContent = 'Select a faction and origin to begin';
-      else if (!hasFac)       status.textContent = 'Now choose your faction';
-      else if (!hasReg)       status.textContent = 'Now choose your origin region';
+      else if (!hasFac)       status.textContent = 'Now choose your faction →';
+      else if (!hasReg)       status.textContent = 'Now choose your origin region →';
       else {
-        const fName = AppState.adventure.playerFaction.name;
-        const rName = AppState.adventure.playerOrigin.name;
-        status.textContent  = `${fName} · ${rName} — ready to begin`;
-        status.style.color  = 'var(--gold-dim)';
+        status.textContent = `✦ ${AppState.adventure.playerFaction.name} · ${AppState.adventure.playerOrigin.name}`;
+        status.style.color = 'var(--gold-dim)';
       }
     }
   }
@@ -1304,21 +1514,16 @@ function showAdventureSetup() {
 /** Reset adventure to setup state */
 function resetAdventure() {
   AppState.adventure = {
-    active:          false,
-    chapter:         0,
-    playerName:      '',
-    playerFaction:   null,
-    playerOrigin:    null,
-    playerBg:        '',
-    factionStanding: {},
-    currentRegion:   null,
-    history:         [],
-    currentChoices:  [],
-    worldImpacts:    [],
+    active: false, chapter: 0, playerName: '', playerFaction: null,
+    playerOrigin: null, playerBg: '', factionStanding: {},
+    currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
+  };
+  AppState.adventureInventory = {
+    items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
   };
   const setup = $('advSetup'), game = $('advGame');
-  if (setup) setup.style.display = 'flex';
-  if (game)  game.style.display  = 'none';
+  if (setup) setup.style.display = 'block';
+  if (game)  game.classList.remove('visible');
   if (hasWorld()) showAdventureSetup();
 }
 
@@ -1342,14 +1547,71 @@ async function beginAdventure() {
     adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
   });
 
-  // Switch panels
+  // Reset inventory / health for new adventure
+  AppState.adventureInventory = {
+    items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
+  };
+
+  // Switch panels — hide setup overlay, show game
   const setup = $('advSetup'), game = $('advGame');
   if (setup) setup.style.display = 'none';
-  if (game)  game.style.display  = 'flex';
+  if (game)  game.classList.add('visible');
 
   renderAdventureCharacterCard();
   renderFactionStandings();
+  renderAdventureHealth();
+  renderAdventureInventory();
   await generateAdventureScene('OPENING', null);
+}
+
+/** Render the health bar */
+function renderAdventureHealth() {
+  const inv = AppState.adventureInventory;
+  const container = $('advHealthBar');
+  if (!container) return;
+  const pct = Math.max(0, Math.min(100, (inv.health / inv.maxHealth) * 100));
+  const color = pct > 60 ? 'var(--ok)' : pct > 30 ? 'var(--warn)' : 'var(--err)';
+  const label = pct > 75 ? 'Strong' : pct > 50 ? 'Wounded' : pct > 25 ? 'Bleeding' : pct > 0 ? 'Dying' : 'Fallen';
+  container.innerHTML = `
+    <div class="adv-health-head">
+      <span class="adv-health-label">Condition</span>
+      <span class="adv-health-value" style="color:${color}">${label} · ${inv.health}/${inv.maxHealth}</span>
+    </div>
+    <div class="adv-health-track">
+      <div class="adv-health-fill" style="width:${pct}%;background:${color}"></div>
+    </div>`;
+}
+
+/** Render the inventory list */
+function renderAdventureInventory() {
+  const inv = AppState.adventureInventory;
+  const container = $('advInventory');
+  if (!container) return;
+
+  const hasItems    = inv.items.length > 0;
+  const hasInsights = inv.keyInsights.length > 0;
+
+  if (!hasItems && !hasInsights) {
+    container.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  if (hasItems) {
+    html += `<div class="adv-inv-head">Inventory</div>`;
+    html += `<div class="adv-inv-items">${inv.items.map(item => `
+      <div class="adv-inv-item" title="${esc(item.description || '')}">
+        <span class="adv-inv-icon">◆</span>
+        <span class="adv-inv-name">${esc(item.name)}</span>
+        <span class="adv-inv-chapter">Ch.${item.obtainedChapter || '?'}</span>
+      </div>`).join('')}</div>`;
+  }
+  if (hasInsights) {
+    html += `<div class="adv-inv-head">Insights</div>`;
+    html += `<div class="adv-inv-insights">${inv.keyInsights.slice(-4).map(ins => `
+      <div class="adv-inv-insight" title="${esc(ins.text)}">☽ ${esc(ins.text)}</div>`).join('')}</div>`;
+  }
+  container.innerHTML = html;
 }
 
 /** Render the character identity card */
@@ -1441,6 +1703,10 @@ async function generateAdventureScene(sceneType, prevChoice) {
   }[sceneType] || 'Continue the story.';
 
   try {
+    const inv = AppState.adventureInventory;
+    const invSummary = inv.items.length ? inv.items.map(i => i.name).join(', ') : 'empty-handed';
+    const healthStr  = `${inv.health}/${inv.maxHealth}`;
+
     const raw = await callApi(
       `You are a masterful narrator for the world of "${W.worldName}" (${W.genre}).
 
@@ -1448,32 +1714,40 @@ WORLD LORE: ${buildWorldContext()}
 ${simState}
 
 PLAYER: ${playerCtx}
+HEALTH: ${healthStr}    INVENTORY: ${invSummary}
 FACTION RELATIONS: ${standingCtx}
 STORY HISTORY: ${historyCtx || 'This is the beginning.'}
 
 SCENE TYPE: ${sceneInstruction}
 
 CRITICAL RULES:
-- Every scene must reference at least one SPECIFIC named element from the world lore (a real faction name, region name, character name, or power system detail)
+- Every scene must reference at least one SPECIFIC named element from the world lore
 - Choices must be grounded in the world — not generic fantasy tropes
 - The player's faction background should affect how NPCs treat them
-- Keep narrative to 3-4 rich paragraphs — not too short, not too long
-- Choices should have real political/social consequences in this world
+- Keep narrative to 3-4 rich paragraphs
+- If the player carries items or knows insights, reference them when relevant
+- Health changes matter — a wound, a near-miss, a healing moment — only when the scene warrants it
+- Items should be specific and memorable (not "sword" but "Branded Signet of the Shattered Oath")
 
 Return ONLY valid JSON:
 {
-  "sceneTitle": "Short evocative title for this scene",
-  "narrative": "3-4 paragraphs separated by \\n\\n. Rich, specific, atmospheric. References real world lore.",
+  "sceneTitle": "Short evocative title",
+  "narrative": "3-4 paragraphs separated by \\n\\n. Specific, atmospheric.",
   "location": "Current region or place name",
   "choices": [
-    {"id":"a","text":"Specific action grounded in this world (1-2 sentences)","consequence":"hint at what kind of consequence","affectsFaction":"faction name or null","standingChange":10},
-    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0},
-    {"id":"c","text":"...","consequence":"...","affectsFaction":"faction name or null","standingChange":-8},
-    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0}
+    {"id":"a","text":"Specific action","consequence":"hint","affectsFaction":"name or null","standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
+    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
+    {"id":"c","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
+    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null}
   ],
-  "worldPulse": "One sentence about something happening in the wider world right now (optional, leave empty string if nothing relevant)"
-}`,
-      { maxTokens: 1100 }
+  "worldPulse": "One sentence about something happening in the wider world (optional)"
+}
+
+itemGained: null OR {"name":"specific item name","description":"what it does or means"}
+itemLost: null OR the name string of an item already in inventory
+insightGained: null OR "a short piece of world knowledge the player now understands"
+healthChange: integer from -30 to +20, or 0 for no change`,
+      { maxTokens: 1200 }
     );
 
     const scene = parseJsonResponse(raw);
@@ -1527,6 +1801,7 @@ Return ONLY valid JSON:
 /** Player makes a choice — resolve consequence then generate next scene */
 async function makeAdventureChoice(choiceId) {
   const adv    = AppState.adventure;
+  const inv    = AppState.adventureInventory;
   const choice = adv.currentChoices.find(c => c.id === choiceId);
   if (!choice) return;
 
@@ -1537,6 +1812,34 @@ async function makeAdventureChoice(choiceId) {
     const current = adv.factionStanding[choice.affectsFaction] ?? 0;
     adv.factionStanding[choice.affectsFaction] = Math.max(-100, Math.min(100, current + choice.standingChange));
   }
+
+  // Apply inventory / health changes
+  const toastLines = [];
+  if (typeof choice.healthChange === 'number' && choice.healthChange !== 0) {
+    inv.health = Math.max(0, Math.min(inv.maxHealth, inv.health + choice.healthChange));
+    if (choice.healthChange < 0) toastLines.push(`${choice.healthChange} Health`);
+    else                          toastLines.push(`+${choice.healthChange} Health`);
+  }
+  if (choice.itemGained && choice.itemGained.name) {
+    inv.items.push({
+      name:              String(choice.itemGained.name),
+      description:       String(choice.itemGained.description || ''),
+      obtainedChapter:   adv.chapter - 1,
+    });
+    toastLines.push(`◆ Acquired: ${choice.itemGained.name}`);
+  }
+  if (choice.itemLost && typeof choice.itemLost === 'string') {
+    const idx = inv.items.findIndex(i => i.name === choice.itemLost);
+    if (idx >= 0) {
+      inv.items.splice(idx, 1);
+      toastLines.push(`✕ Lost: ${choice.itemLost}`);
+    }
+  }
+  if (choice.insightGained && typeof choice.insightGained === 'string') {
+    inv.keyInsights.push({ text: choice.insightGained, chapter: adv.chapter - 1 });
+    toastLines.push(`☽ Insight: ${choice.insightGained.slice(0, 40)}${choice.insightGained.length > 40 ? '…' : ''}`);
+  }
+  if (toastLines.length) showToast(toastLines.join(' · '));
 
   // Log to journey
   adv.history.push({
@@ -1559,6 +1862,8 @@ async function makeAdventureChoice(choiceId) {
   }
 
   renderFactionStandings();
+  renderAdventureHealth();
+  renderAdventureInventory();
   saveCurrentWorld();
 
   // Show choice was selected, brief moment before next scene
@@ -1567,8 +1872,56 @@ async function makeAdventureChoice(choiceId) {
     if (btn.dataset.choiceId === choiceId) btn.classList.add('selected');
   });
 
+  // Check for death condition before generating next scene
+  if (inv.health <= 0) {
+    await new Promise(r => setTimeout(r, 800));
+    handlePlayerDeath();
+    return;
+  }
+
   await new Promise(r => setTimeout(r, 600));
   await generateAdventureScene('CONTINUATION', choice.text);
+}
+
+/** Handle the player's story ending when health reaches zero */
+async function handlePlayerDeath() {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  $('advNarrative').innerHTML = '<div class="adv-loading">Your story reaches its end…</div>';
+  $('advChoices').innerHTML   = '';
+
+  try {
+    const recent = adv.history.slice(-3).map(h => h.choiceText).join(' → ');
+    const raw = await callApi(
+      `Write a 2-3 paragraph ending for the story of ${adv.playerName || 'the wanderer'} in "${W.worldName}".
+They fell in ${adv.currentRegion}. They were a member of ${adv.playerFaction?.name}, born in ${adv.playerOrigin?.name}.
+Recent actions: ${recent || 'a short but meaningful journey'}.
+Make it atmospheric, specific to the world's lore, and meaningful — not just "you died." Honor the character's arc.
+Return ONLY plain text, no JSON, no preamble.`,
+      { maxTokens: 500 }
+    );
+    const epitaph = raw.split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p)}</p>`).join('');
+    $('advNarrative').innerHTML = `
+      <div class="adv-ending">
+        <div class="adv-ending-badge">✦ End of Chapter ${adv.chapter - 1}</div>
+        ${epitaph}
+      </div>`;
+  } catch (_) {
+    $('advNarrative').innerHTML = `
+      <div class="adv-ending">
+        <div class="adv-ending-badge">✦ End</div>
+        <p>And so ended the tale of ${esc(adv.playerName || 'the wanderer')}, who fell in ${esc(adv.currentRegion || 'the wilds')} after ${adv.chapter - 1} chapters. The world turns on.</p>
+      </div>`;
+  }
+
+  $('advChoices').innerHTML = `<button class="btn-forge" id="btnAdvRestartFromEnd">✦ Begin a New Story</button>`;
+  $('btnAdvRestartFromEnd')?.addEventListener('click', () => {
+    resetAdventure();
+    setNav('dnd');
+  });
+  adv.active = false;
+  saveCurrentWorld();
 }
 
 /** Panel content for adventure mode */
@@ -2034,6 +2387,64 @@ function bindEvents() {
   $('btnDndToggle').addEventListener('click',()=>setNav('dnd'));
   $('btnExport').addEventListener('click',exportJSON);
   $('btnSaveNow').addEventListener('click',doSave);
+
+  // Map overlay pills
+  document.querySelectorAll('.map-pill').forEach(pill => {
+    pill.addEventListener('click', () => setMapOverlay(pill.dataset.overlay));
+  });
+
+  // Global keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    // Ignore if typing in an input/textarea
+    const inField = ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName);
+
+    // Esc closes any open modal
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      return;
+    }
+
+    if (inField) return;
+
+    // Only active when on main screen with a world loaded
+    if (!hasWorld()) return;
+    if (!$('screen-main')?.classList.contains('active')) return;
+
+    // Cmd/Ctrl+K → Oracle
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      setNav('oracle');
+      setTimeout(() => $('chatInput')?.focus(), 50);
+      return;
+    }
+
+    // Cmd/Ctrl+S → manual save
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      doSave();
+      return;
+    }
+
+    // Bare keys: only when not holding modifiers
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+
+    switch (e.key.toLowerCase()) {
+      case 'm': setNav('map'); break;
+      case 'n': setNav('nova'); break;
+      case 'a': setNav('dnd'); break;
+      case 'o': setNav('oracle'); setTimeout(() => $('chatInput')?.focus(), 50); break;
+      case ' ':
+        // Space → step Nova if on Nova view
+        if (AppState.activeNav === 'nova') {
+          e.preventDefault();
+          runSimStep();
+        }
+        break;
+      case '1': setMapOverlay('illustrated'); break;
+      case '2': setMapOverlay('political'); break;
+      case '3': setMapOverlay('stability'); break;
+    }
+  });
 
   // Region modal close
   $('btnRegionClose').addEventListener('click',()=>closeModal('regionModal'));

@@ -165,7 +165,34 @@ export const AppState = {
     savedForResume: false, // true once user has abandoned mid-wizard
   },
 
-  nova: { year:0, running:false, events:[], intervalId:null, regionState:{} },
+  nova: {
+    year: 0,
+    running: false,
+    events: [],            // [{year, text, type, affectedRegions, causedBy}]
+    intervalId: null,
+    regionState: {},       // { regionName: { power, stability, population, trend, lastChange } }
+    factionState: {},      // { factionName: { influence, territory, reputation } }
+    epoch: 'Age of Dawn',  // AI-named era that changes as world evolves
+    epochEvents: 0,        // events in current epoch (triggers new epoch every ~15)
+    pendingConsequences: [], // scheduled future effects from past events
+    worldThemes: [],       // emergent themes the AI identifies over time
+  },
+
+  // Adventure inventory, health, achievements
+  adventureInventory: {
+    items: [],           // [{name, description, obtainedChapter}]
+    health: 100,
+    maxHealth: 100,
+    keyInsights: [],     // important lore the player has learned
+    achievements: [],    // [{name, description, chapter}]
+  },
+
+  // UI state for polish features
+  ui: {
+    mapOverlay: 'illustrated',  // 'illustrated' | 'political' | 'stability'
+    apiCallCount: 0,            // rough cost awareness
+    lastSavedAt: null,
+  },
 
   // Adventure Mode — lore-grounded choose-your-own-adventure
   adventure: {
@@ -214,15 +241,41 @@ export function validateWorld(world) {
 }
 
 export function buildWorldContext() {
-  const W=AppState.world; if(!W) return 'No world loaded.';
-  let ctx=`World: "${W.worldName}" (${W.genre||'Fantasy'}). ${W.overview||''} `;
-  if(W.centralConflict) ctx+=`Central conflict: ${W.centralConflict} `;
-  ctx+=`Regions: ${(W.regions||[]).map(r=>r.name).join(', ')}. `;
-  if((W.characters||[]).length) ctx+=`Key figures: ${W.characters.map(c=>`${c.name} (${c.role||''})`).join(', ')}. `;
-  if((W.factions||[]).length) ctx+=`Factions: ${W.factions.map(f=>f.name).join(', ')}. `;
-  if(W.powerName) ctx+=`Power system: ${W.powerName}. `;
-  const simCtx=AppState.nova.events.length?` Simulation year ${AppState.nova.year}. Recent events: ${AppState.nova.events.slice(-3).map(e=>`Year ${e.year}: ${e.text}`).join(' | ')}.`:'';
-  return ctx.trim()+simCtx;
+  const W = AppState.world;
+  if (!W) return 'No world loaded.';
+  let ctx = `World: "${W.worldName}" (${W.genre || 'Fantasy'}). ${W.overview || ''} `;
+  if (W.centralConflict) ctx += `Central conflict: ${W.centralConflict} `;
+  ctx += `Regions: ${(W.regions || []).map(r => r.name).join(', ')}. `;
+  if ((W.characters || []).length) ctx += `Key figures: ${W.characters.map(c => `${c.name} (${c.role || ''})`).join(', ')}. `;
+  if ((W.factions || []).length) ctx += `Factions: ${W.factions.map(f => f.name).join(', ')}. `;
+  if (W.powerName) ctx += `Power system: ${W.powerName}. `;
+
+  // Rich simulation memory — used by Oracle, Nova, and Adventure
+  const sim = AppState.nova;
+  if (sim.events.length) {
+    ctx += `\n\n=== CURRENT WORLD STATE (Year ${sim.year}, ${sim.epoch}) ===\n`;
+
+    // Region status with trends
+    const regionStatus = Object.entries(sim.regionState || {}).map(([name, s]) => {
+      const trendSym = s.trend === 'rising' ? '↑' : s.trend === 'falling' ? '↓' : '→';
+      return `${name}: ${s.power}% ${trendSym}, stab ${s.stability}%`;
+    }).join(' | ');
+    if (regionStatus) ctx += `Regions: ${regionStatus}\n`;
+
+    // Last 5 events for stronger continuity than before
+    const recent = sim.events.slice(-5).map(e => `Yr ${e.year}: ${e.text}`).join(' | ');
+    ctx += `Recent history: ${recent}\n`;
+
+    if (sim.worldThemes?.length) {
+      ctx += `Emerging themes: ${sim.worldThemes.slice(-3).join(', ')}\n`;
+    }
+
+    if (sim.pendingConsequences?.length) {
+      ctx += `Brewing tensions: ${sim.pendingConsequences.map(c => c.description).join('; ')}\n`;
+    }
+  }
+
+  return ctx.trim();
 }
 
 export function getEntrySubLabel(e) {

@@ -537,12 +537,13 @@ function drawSeaCreature(svg, x, y) {
 // ─── MAIN RENDER FUNCTION ─────────────────────────────────────
 /**
  * Full illustrated map render.
- * @param {string} svgId     - ID of the SVG element to render into
- * @param {object} world     - The world data object
- * @param {object} novaState - Nova simulation state { year, regionState, events }
- * @param {function} onRegionClick - Called with regionName when clicked
+ * @param {string} svgId     - SVG element ID
+ * @param {object} world     - World data
+ * @param {object} novaState - Simulation state
+ * @param {function} onRegionClick - Region click callback
+ * @param {string} overlay   - 'illustrated' | 'political' | 'stability' (default 'illustrated')
  */
-export function renderIllustratedMap(svgId, world, novaState, onRegionClick) {
+export function renderIllustratedMap(svgId, world, novaState, onRegionClick, overlay = 'illustrated') {
   const svg = document.getElementById(svgId);
   if (!svg) return;
   svg.innerHTML = '';
@@ -550,6 +551,14 @@ export function renderIllustratedMap(svgId, world, novaState, onRegionClick) {
   const vw = 900;
   const vh = 580;
   svg.setAttribute('viewBox', `0 0 ${vw} ${vh}`);
+
+  if (overlay === 'political') {
+    return renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh);
+  }
+  if (overlay === 'stability') {
+    return renderStabilityMap(svg, world, novaState, onRegionClick, vw, vh);
+  }
+  // otherwise fall through to illustrated (default)
 
   // ── Background: parchment texture ──────────────────────────
   const defs = document.createElementNS(NS, 'defs');
@@ -824,5 +833,337 @@ export function renderMiniMap(svgId, world, novaState) {
       x:8, y:vh-6, 'font-family':'Cinzel,serif', 'font-size':6.5,
       fill:PARCHMENT.inkFaint,
     }, `Year ${novaState.year}`));
+  }
+}
+
+// ─── POLITICAL MAP ───────────────────────────────────────────
+/**
+ * Political view — colors regions by dominant faction and shows influence.
+ */
+function renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh) {
+  // Dark political background
+  svg.appendChild(mk('rect', { width: vw, height: vh, fill: '#0f0d09' }));
+
+  // Subtle grid
+  const gridPattern = document.createElementNS(NS, 'defs');
+  gridPattern.innerHTML = `
+    <pattern id="politicalGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(201,168,76,0.04)" stroke-width="0.5"/>
+    </pattern>`;
+  svg.appendChild(gridPattern);
+  svg.appendChild(mk('rect', { width: vw, height: vh, fill: 'url(#politicalGrid)' }));
+
+  const regions = world.regions || [];
+  const factions = world.factions || [];
+
+  // Assign a color per faction
+  const FACTION_COLORS = ['#c04040','#4a9a6a','#5a8fc9','#c9a84c','#a080e0','#e08040','#20a090','#c06090'];
+  const factionColors = {};
+  factions.forEach((f, i) => { factionColors[f.name] = FACTION_COLORS[i % FACTION_COLORS.length]; });
+
+  // Match each region to its most-likely controlling faction.
+  // Heuristic: check if any faction's region field mentions this region; otherwise use most powerful faction as ambient.
+  function dominantFaction(region) {
+    const match = factions.find(f =>
+      (f.region || '').toLowerCase().includes(region.name.toLowerCase().split(' ')[0].slice(0, 4)) ||
+      (f.territory || '').toLowerCase().includes(region.name.toLowerCase().split(' ')[0].slice(0, 4))
+    );
+    if (match) return match;
+    // Use region index modulo faction count as fallback so coverage is visible
+    const idx = regions.indexOf(region);
+    return factions[idx % Math.max(1, factions.length)] || null;
+  }
+
+  // Draw region territories as colored zones
+  regions.forEach(region => {
+    const cx = Math.max(80, Math.min(vw - 80, parseFloat(region.x) || 300));
+    const cy = Math.max(80, Math.min(vh - 80, parseFloat(region.y) || 290));
+    const radius = Math.max(45, Math.min(100, parseFloat(region.radius) || 70));
+    const simState = novaState?.regionState?.[region.name] || { power: 50, stability: 50 };
+
+    const faction = dominantFaction(region);
+    const color = faction ? factionColors[faction.name] : '#555';
+    const powerPct = simState.power / 100;
+
+    const g = mk('g');
+    g.style.cursor = 'pointer';
+
+    // Territory zone — opacity shows faction control strength
+    const path = makeLandmassPath(cx, cy, radius, region.name, 0.35);
+    g.appendChild(mk('path', {
+      d: path,
+      fill: color,
+      'fill-opacity': 0.2 + powerPct * 0.3,
+      stroke: color,
+      'stroke-width': 1.8,
+      'stroke-opacity': 0.7,
+    }));
+
+    // Power indicator ring
+    g.appendChild(mk('circle', { cx, cy, r: radius * 0.35, fill: color, 'fill-opacity': 0.15 }));
+
+    // Faction flag/crest marker at center
+    g.appendChild(mk('circle', { cx, cy, r: 8, fill: color, 'fill-opacity': 0.9, stroke: '#000', 'stroke-width': 1 }));
+    g.appendChild(mk('text', {
+      x: cx, y: cy + 3,
+      'text-anchor': 'middle',
+      'font-family': 'Cinzel,serif',
+      'font-size': 9,
+      fill: '#0d0b08',
+      'font-weight': '700',
+    }, (faction?.name || '?').charAt(0)));
+
+    // Region name label
+    g.appendChild(mk('rect', {
+      x: cx - 50, y: cy + radius + 4,
+      width: 100, height: 14, rx: 2,
+      fill: 'rgba(10,8,6,0.9)',
+      stroke: color,
+      'stroke-width': 0.8,
+    }));
+    g.appendChild(mk('text', {
+      x: cx, y: cy + radius + 14,
+      'text-anchor': 'middle',
+      'font-family': 'Cinzel,serif',
+      'font-size': 8,
+      fill: '#c8b89a',
+      'letter-spacing': 1,
+    }, (region.name || '').toUpperCase().slice(0, 14)));
+
+    // Faction name label below
+    if (faction) {
+      g.appendChild(mk('text', {
+        x: cx, y: cy + radius + 26,
+        'text-anchor': 'middle',
+        'font-family': 'Crimson Pro,serif',
+        'font-size': 7,
+        fill: color,
+        'font-style': 'italic',
+      }, `⚑ ${(faction.name || '').slice(0, 20)}`));
+    }
+
+    // Power/stability mini bars
+    const barW = 40;
+    g.appendChild(mk('rect', {
+      x: cx - barW / 2, y: cy - radius - 8,
+      width: barW, height: 2,
+      fill: 'rgba(255,255,255,0.1)',
+    }));
+    g.appendChild(mk('rect', {
+      x: cx - barW / 2, y: cy - radius - 8,
+      width: barW * (simState.power / 100), height: 2,
+      fill: color, 'fill-opacity': 0.9,
+    }));
+
+    g.addEventListener('click', () => onRegionClick && onRegionClick(region.name));
+    svg.appendChild(g);
+  });
+
+  // Legend of faction colors in corner
+  const legendX = 18, legendY = vh - (factions.length * 18) - 28;
+  svg.appendChild(mk('rect', {
+    x: legendX - 8, y: legendY - 12,
+    width: 170, height: factions.length * 18 + 22,
+    rx: 4,
+    fill: 'rgba(10,8,6,0.92)',
+    stroke: 'rgba(201,168,76,0.3)',
+    'stroke-width': 0.8,
+  }));
+  svg.appendChild(mk('text', {
+    x: legendX, y: legendY,
+    'font-family': 'Cinzel,serif',
+    'font-size': 8,
+    fill: '#c9a84c',
+    'letter-spacing': 1.5,
+  }, 'FACTIONS'));
+  factions.forEach((f, i) => {
+    const ly = legendY + 15 + i * 15;
+    svg.appendChild(mk('circle', { cx: legendX + 6, cy: ly - 3, r: 4, fill: factionColors[f.name] }));
+    svg.appendChild(mk('text', {
+      x: legendX + 16, y: ly,
+      'font-family': 'Crimson Pro,serif',
+      'font-size': 9,
+      fill: '#c8b89a',
+    }, f.name.slice(0, 20)));
+  });
+
+  // Title
+  svg.appendChild(mk('text', {
+    x: vw / 2, y: 22,
+    'text-anchor': 'middle',
+    'font-family': 'Cinzel,serif',
+    'font-size': 11,
+    fill: '#c9a84c',
+    'letter-spacing': 3,
+  }, `${(world.worldName || '').toUpperCase()} — POLITICAL MAP`));
+
+  if (novaState?.year > 0) {
+    svg.appendChild(mk('text', {
+      x: vw / 2, y: 36,
+      'text-anchor': 'middle',
+      'font-family': 'Crimson Pro,serif',
+      'font-size': 8,
+      fill: '#8a6e2f',
+      'font-style': 'italic',
+    }, `Year ${novaState.year} · ${novaState.epoch || ''}`));
+  }
+}
+
+// ─── STABILITY HEATMAP ───────────────────────────────────────
+/**
+ * Stability view — heatmap of which regions are calm vs. in crisis.
+ */
+function renderStabilityMap(svg, world, novaState, onRegionClick, vw, vh) {
+  svg.appendChild(mk('rect', { width: vw, height: vh, fill: '#0a0806' }));
+
+  const regions = world.regions || [];
+
+  // Stability → color gradient: red (unstable) → orange → yellow → green (stable)
+  function stabilityColor(stab) {
+    if (stab < 25) return '#c04040';  // crisis
+    if (stab < 45) return '#c96020';  // unrest
+    if (stab < 65) return '#c9a84c';  // tense
+    if (stab < 85) return '#9a9a4c';  // calm
+    return '#4a9a6a';                  // peaceful
+  }
+
+  function stabilityLabel(stab) {
+    if (stab < 25) return 'CRISIS';
+    if (stab < 45) return 'UNREST';
+    if (stab < 65) return 'TENSE';
+    if (stab < 85) return 'CALM';
+    return 'PEACEFUL';
+  }
+
+  regions.forEach(region => {
+    const cx = Math.max(80, Math.min(vw - 80, parseFloat(region.x) || 300));
+    const cy = Math.max(80, Math.min(vh - 80, parseFloat(region.y) || 290));
+    const radius = Math.max(45, Math.min(100, parseFloat(region.radius) || 70));
+    const simState = novaState?.regionState?.[region.name] || { stability: 50, power: 50 };
+
+    const color = stabilityColor(simState.stability);
+    const label = stabilityLabel(simState.stability);
+    const intensity = 1 - (simState.stability / 100); // 0 = peaceful, 1 = crisis
+
+    const g = mk('g');
+    g.style.cursor = 'pointer';
+
+    // Outer glow for regions in crisis
+    if (simState.stability < 35) {
+      for (let i = 3; i > 0; i--) {
+        g.appendChild(mk('circle', {
+          cx, cy,
+          r: radius + i * 8,
+          fill: color,
+          'fill-opacity': 0.05 * intensity,
+        }));
+      }
+    }
+
+    // Main region blob
+    const path = makeLandmassPath(cx, cy, radius, region.name, 0.3);
+    g.appendChild(mk('path', {
+      d: path,
+      fill: color,
+      'fill-opacity': 0.5,
+      stroke: color,
+      'stroke-width': 2,
+      'stroke-opacity': 0.9,
+    }));
+
+    // Pulse effect if in crisis
+    if (simState.stability < 25) {
+      g.classList.add('region-pulse');
+    }
+
+    // Stability value in center
+    g.appendChild(mk('text', {
+      x: cx, y: cy - 3,
+      'text-anchor': 'middle',
+      'font-family': 'Cinzel,serif',
+      'font-size': 18,
+      fill: '#fff',
+      'font-weight': '700',
+    }, `${simState.stability}`));
+
+    // Label below number
+    g.appendChild(mk('text', {
+      x: cx, y: cy + 12,
+      'text-anchor': 'middle',
+      'font-family': 'Cinzel,serif',
+      'font-size': 8,
+      fill: '#fff',
+      'fill-opacity': 0.85,
+      'letter-spacing': 1.5,
+    }, label));
+
+    // Region name below
+    g.appendChild(mk('text', {
+      x: cx, y: cy + radius + 14,
+      'text-anchor': 'middle',
+      'font-family': 'Cinzel,serif',
+      'font-size': 9,
+      fill: '#c8b89a',
+      'letter-spacing': 1.5,
+    }, (region.name || '').toUpperCase()));
+
+    g.addEventListener('click', () => onRegionClick && onRegionClick(region.name));
+    svg.appendChild(g);
+  });
+
+  // Legend
+  const legendItems = [
+    { color: '#4a9a6a', label: 'Peaceful (85-100)' },
+    { color: '#9a9a4c', label: 'Calm (65-85)' },
+    { color: '#c9a84c', label: 'Tense (45-65)' },
+    { color: '#c96020', label: 'Unrest (25-45)' },
+    { color: '#c04040', label: 'Crisis (<25)' },
+  ];
+  const lx = 18, ly = vh - legendItems.length * 16 - 28;
+  svg.appendChild(mk('rect', {
+    x: lx - 8, y: ly - 12,
+    width: 170, height: legendItems.length * 16 + 22,
+    rx: 4,
+    fill: 'rgba(10,8,6,0.92)',
+    stroke: 'rgba(201,168,76,0.3)',
+    'stroke-width': 0.8,
+  }));
+  svg.appendChild(mk('text', {
+    x: lx, y: ly,
+    'font-family': 'Cinzel,serif',
+    'font-size': 8,
+    fill: '#c9a84c',
+    'letter-spacing': 1.5,
+  }, 'STABILITY'));
+  legendItems.forEach((item, i) => {
+    const y = ly + 15 + i * 14;
+    svg.appendChild(mk('rect', { x: lx, y: y - 6, width: 10, height: 8, fill: item.color }));
+    svg.appendChild(mk('text', {
+      x: lx + 16, y: y,
+      'font-family': 'Crimson Pro,serif',
+      'font-size': 8.5,
+      fill: '#c8b89a',
+    }, item.label));
+  });
+
+  // Title
+  svg.appendChild(mk('text', {
+    x: vw / 2, y: 22,
+    'text-anchor': 'middle',
+    'font-family': 'Cinzel,serif',
+    'font-size': 11,
+    fill: '#c9a84c',
+    'letter-spacing': 3,
+  }, `${(world.worldName || '').toUpperCase()} — STABILITY MAP`));
+
+  if (novaState?.year > 0) {
+    svg.appendChild(mk('text', {
+      x: vw / 2, y: 36,
+      'text-anchor': 'middle',
+      'font-family': 'Crimson Pro,serif',
+      'font-size': 8,
+      fill: '#8a6e2f',
+      'font-style': 'italic',
+    }, `Year ${novaState.year} · ${novaState.epoch || ''}`));
   }
 }

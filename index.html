@@ -132,14 +132,25 @@
       <div id="view-map" class="view active">
         <div class="map-toolbar">
           <span class="map-toolbar-title" id="mapLabel">World Map</span>
+          <div class="map-overlay-pills">
+            <button class="map-pill active" data-overlay="illustrated">◈ Illustrated</button>
+            <button class="map-pill" data-overlay="political">⚑ Political</button>
+            <button class="map-pill" data-overlay="stability">◎ Stability</button>
+          </div>
           <button class="btn-sm" id="btnSimToggle">◎ Simulate</button>
           <button class="btn-sm" id="btnDndToggle">✦ Adventure</button>
           <button class="btn-sm" id="btnExport">↓ Export</button>
           <button class="btn-sm" id="btnSaveNow">💾 Save</button>
+          <span class="api-badge" id="apiBadge" title="API calls this session">⚡ 0</span>
         </div>
         <div class="map-wrap" id="mapWrap">
           <svg id="worldMap" viewBox="0 0 900 580" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="tooltip" id="tooltip"></div>
+          <!-- API call counter (bottom right corner of map) -->
+          <div class="api-counter" id="apiCounter" title="API calls this session">
+            <span class="api-counter-icon">⚡</span>
+            <span class="api-counter-val" id="apiCounterVal">0</span>
+          </div>
         </div>
       </div>
 
@@ -272,9 +283,11 @@
 
             <div class="adv-choices-panel">
               <div class="adv-character-card" id="advCharacterCard"></div>
+              <div class="adv-health-bar" id="advHealthBar"></div>
               <div class="adv-standing-bars" id="advStandingBars"></div>
               <div class="adv-choices-header">What do you do?</div>
               <div class="adv-choices" id="advChoices"></div>
+              <div class="adv-inventory" id="advInventory"></div>
               <div class="adv-log-header">Your Journey</div>
               <div class="adv-log" id="advLog"></div>
             </div>

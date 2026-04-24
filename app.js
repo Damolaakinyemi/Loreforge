@@ -2758,6 +2758,30 @@ function bindEvents() {
     });
   });
 
+  // Login button
+  $('btnLogin').addEventListener('click',()=>{
+    const u=$('loginUsername').value.trim();
+    const p=$('loginPassword').value;
+    $('loginError').textContent='';
+    if(!u||!p){$('loginError').textContent='Enter username and password.';return;}
+    const r=loginUser(u,p);
+    if(!r.ok){$('loginError').textContent=r.error;return;}
+    loadHub();
+  });
+
+  // Register button
+  $('btnRegister').addEventListener('click',()=>{
+    const u=$('regUsername').value.trim();
+    const p=$('regPassword').value;
+    $('registerError').textContent='';
+    if(!u||!p){$('registerError').textContent='Choose a username and password.';return;}
+    if(p.length<4){$('registerError').textContent='Password must be at least 4 characters.';return;}
+    const r=registerUser(u,p);
+    if(!r.ok){$('registerError').textContent=r.error;return;}
+    loginUser(u,p);
+    loadHub();
+  });
+
   // Enter key on login form
   [$('loginUsername'),$('loginPassword')].forEach(el=>{
     el?.addEventListener('keydown',e=>{if(e.key==='Enter')$('btnLogin').click();});

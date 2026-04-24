@@ -214,6 +214,16 @@ export const AppState = {
     currentChoices: [],
     worldImpacts: [],
 
+    // NPC system — persistent cast of characters across scenes.
+    // Each NPC: { id, name, role, faction, description, disposition (-100..100),
+    //            region, firstMetChapter, lastSeenChapter, traits[], alive, relationshipNote }
+    npcs: {},
+
+    // Environmental resources — things scavenge-able at current location.
+    // { location: [ { name, type, description, takenInChapter|null } ] }
+    // "type" is e.g. 'herb', 'tool', 'currency', 'document', 'curio'
+    environment: {},
+
     // Legacy tracking — when player dies, this captures their final state
     // so their heir can inherit part of it
     legacyChain: [],  // [{name, faction, origin, chapters, deathRegion, finalItems}]
@@ -555,6 +565,9 @@ export function loadAdventureSave(idx) {
   if (!save) return { ok: false, error: 'Save not found' };
   AppState.adventure          = save.adventure;
   AppState.adventureInventory = save.inventory;
+  // Backfill new fields added after this save was made
+  if (!AppState.adventure.npcs)        AppState.adventure.npcs = {};
+  if (!AppState.adventure.environment) AppState.adventure.environment = {};
   return { ok: true };
 }
 

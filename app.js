@@ -1670,7 +1670,9 @@ function resetAdventure(fullReset = false) {
     active: false, chapter: 0, playerName: '', playerFaction: null,
     playerOrigin: null, playerBg: '', playerArchetype: null,
     factionStanding: {}, currentRegion: null, history: [],
-    currentChoices: [], worldImpacts: [], legacyChain: preservedLegacy,
+    currentChoices: [], worldImpacts: [],
+    npcs: {}, environment: {},
+    legacyChain: preservedLegacy,
   };
   AppState.adventureInventory = {
     items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
@@ -1702,6 +1704,10 @@ async function beginAdventure() {
     adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
   });
 
+  // Fresh NPC roster and environment cache for this run
+  adv.npcs        = {};
+  adv.environment = {};
+
   // Max health gets a small bonus from strength attribute
   const strengthBonus = Math.round((adv.playerArchetype.stats.strength - 25) / 2);
   const maxHealth = Math.max(50, Math.min(150, 100 + strengthBonus));
@@ -1718,6 +1724,8 @@ async function beginAdventure() {
   renderFactionStandings();
   renderAdventureHealth();
   renderAdventureInventory();
+  renderAdventureNpcs();
+  renderAdventureEnvironment();
 
   // Generate 2 starter items specific to this character before the story begins
   await generateStarterItems();
@@ -1852,6 +1860,130 @@ function renderAdventureInventory() {
   });
 }
 
+/** Small hint for how a scavenged resource might be useful (by type). */
+function typeReuseHint(type) {
+  const m = {
+    herb:     'Healing, antidotes, or barter with apothecaries.',
+    tool:     'Solving practical problems — locks, traps, repairs.',
+    currency: 'Spending, bribing, or buying passage.',
+    document: 'Evidence, leverage, or lore not widely known.',
+    curio:    'Gift, trade, or a curiosity with hidden meaning.',
+    food:     'Restoring strength on the road.',
+    weapon:   'Combat, intimidation, or ritual use.',
+  };
+  return m[type] || 'Something that may matter later.';
+}
+
+/**
+ * Render NPC cards for everyone currently in the player's region.
+ * Shows name, role, disposition bar, and lets the player tap for details.
+ */
+function renderAdventureNpcs() {
+  const container = $('advNpcs');
+  if (!container) return;
+  const adv = AppState.adventure;
+  const loc = adv.currentRegion || 'unknown';
+
+  // Recently-seen NPCs here (last 3 chapters) — keeps the panel from drowning
+  const recent = Object.values(adv.npcs || {}).filter(n =>
+    n.alive !== false &&
+    n.region === loc &&
+    (adv.chapter - (n.lastSeenChapter || 0)) <= 2
+  );
+
+  if (!recent.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const dispBar = v => {
+    const pct = Math.round((v + 100) / 2); // -100..100 → 0..100
+    const color = v > 30 ? 'var(--ok)' : v < -30 ? 'var(--err)' : 'var(--gold-dim)';
+    return `<div class="adv-npc-disp-wrap"><div class="adv-npc-disp-bar" style="width:${pct}%;background:${color}"></div></div>`;
+  };
+  const label = v => v > 50 ? 'Ally' : v > 20 ? 'Warm' : v > -20 ? 'Neutral' : v > -50 ? 'Cold' : 'Hostile';
+
+  container.innerHTML = `
+    <div class="adv-npc-head">Nearby (${recent.length})</div>
+    <div class="adv-npc-list">
+      ${recent.map(n => `
+        <div class="adv-npc-card" data-npc="${esc(n.id)}">
+          <div class="adv-npc-row">
+            <span class="adv-npc-name">${esc(n.name)}</span>
+            <span class="adv-npc-label">${label(n.disposition || 0)}</span>
+          </div>
+          <div class="adv-npc-role">${esc(n.role || '')}${n.faction ? ` · ${esc(n.faction)}` : ''}</div>
+          ${dispBar(n.disposition || 0)}
+        </div>
+      `).join('')}
+    </div>`;
+
+  // Click to show details
+  container.querySelectorAll('.adv-npc-card').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.npc;
+      const n  = adv.npcs[id];
+      if (n) showNpcDetail(n);
+    });
+  });
+}
+
+/** Lightweight NPC detail popup — reuses the item detail modal for consistency. */
+function showNpcDetail(npc) {
+  const titleEl = $('itemDetailTitle');
+  const subEl   = $('itemDetailSub');
+  const bodyEl  = $('itemDetailBody');
+  if (!titleEl || !bodyEl) return;
+  titleEl.textContent = npc.name;
+  subEl.textContent   = `${npc.role || 'Unknown'}${npc.faction ? ' · ' + npc.faction : ''}`;
+
+  const sign = (npc.disposition || 0) > 0 ? '+' : '';
+  const traits = Array.isArray(npc.traits) && npc.traits.length
+    ? `<div class="item-modal-section"><div class="item-modal-label">Traits</div><p>${npc.traits.map(t => esc(t)).join(', ')}</p></div>`
+    : '';
+  const rel = npc.relationshipNote
+    ? `<div class="item-modal-section"><div class="item-modal-label">Relationship</div><p>${esc(npc.relationshipNote)}</p></div>`
+    : '';
+
+  bodyEl.innerHTML = `
+    ${npc.description ? `<div class="item-modal-section"><div class="item-modal-label">About</div><p>${esc(npc.description)}</p></div>` : ''}
+    ${traits}
+    <div class="item-modal-section">
+      <div class="item-modal-label">Disposition</div>
+      <p>${sign}${npc.disposition || 0} — last seen chapter ${npc.lastSeenChapter || '?'}</p>
+    </div>
+    ${rel}`;
+  openModal('itemDetailModal');
+}
+
+/** Render the environmental resources panel — what's scavengeable here. */
+function renderAdventureEnvironment() {
+  const container = $('advEnvironment');
+  if (!container) return;
+  const adv = AppState.adventure;
+  const loc = adv.currentRegion || 'unknown';
+  const resources = (adv.environment?.[loc] || []).filter(r => r.takenInChapter == null);
+
+  if (!resources.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const icons = { herb:'❦', tool:'⚒', currency:'◎', document:'✎', curio:'❖', food:'◐', weapon:'†' };
+
+  container.innerHTML = `
+    <div class="adv-env-head">Here (${resources.length})</div>
+    <div class="adv-env-list">
+      ${resources.map(r => `
+        <div class="adv-env-item" title="${esc(r.description || '')}">
+          <span class="adv-env-icon">${icons[r.type] || '◈'}</span>
+          <span class="adv-env-name">${esc(r.name)}</span>
+          <span class="adv-env-type">${esc(r.type || 'curio')}</span>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
 /**
  * Show the full item detail modal.
  * @param {object} item - the inventory item
@@ -1983,6 +2115,21 @@ async function generateAdventureScene(sceneType, prevChoice) {
       ? `${adv.playerArchetype.label} (Str:${adv.playerArchetype.stats.strength}, Int:${adv.playerArchetype.stats.intelligence}, Dex:${adv.playerArchetype.stats.dexterity}, Spd:${adv.playerArchetype.stats.speed})`
       : 'unknown';
 
+    // Build current-region NPC roster context so recurring NPCs stay consistent
+    const localNpcs = Object.values(adv.npcs || {}).filter(n =>
+      n.alive !== false && n.region === adv.currentRegion
+    );
+    const npcCtx = localNpcs.length
+      ? localNpcs.map(n => `${n.name} (${n.role}, disposition ${n.disposition >= 0 ? '+' : ''}${n.disposition}${n.relationshipNote ? ` — ${n.relationshipNote}` : ''})`).join('; ')
+      : 'No recurring NPCs here yet — introduce one if it fits the scene.';
+
+    // Scavenge context — what's already in the environment at this location
+    const locKey = adv.currentRegion || 'unknown';
+    const envHere = (adv.environment?.[locKey] || []).filter(e => e.takenInChapter == null);
+    const envCtx = envHere.length
+      ? `Available resources here: ${envHere.map(e => e.name).join(', ')}`
+      : 'No known resources here yet — you may surface 1–2 if it fits the scene.';
+
     const raw = await callApi(
       `You are a narrator for "${W.worldName}" (${W.genre}).
 
@@ -1995,6 +2142,9 @@ HEALTH: ${healthStr}    INVENTORY: ${invSummary}
 FACTION RELATIONS: ${standingCtx}
 STORY HISTORY: ${historyCtx || 'This is the beginning.'}
 
+LOCAL NPCS: ${npcCtx}
+ENVIRONMENT: ${envCtx}
+
 SCENE TYPE: ${sceneInstruction}
 
 WRITING STYLE — CRITICAL:
@@ -2004,32 +2154,50 @@ WRITING STYLE — CRITICAL:
 - If you use a lore term for the first time, briefly anchor it ("the Iron Throne — the ruling empire of the eastern lands").
 - Make the scene READ EASILY. The player should understand what's happening without rereading.
 
+SCENE POPULATION — REQUIRED:
+- At LEAST one NPC should be present or reachable in nearly every scene — a stranger, merchant, guard, priest, wanderer, rival, informant, etc. They have names, opinions, and their own agenda.
+- If an NPC from LOCAL NPCS fits, reuse them — keep personalities consistent. Otherwise introduce a new named person.
+- At LEAST one environmental detail should be something the player could interact with: a half-open crate, an herb growing nearby, graffiti, a forgotten tool, coins in a gutter, a posted notice. Not every resource is useful — some are junk or flavor.
+
 CONTENT RULES:
 - Reference at least one named element from the world lore
 - The player's archetype should shape choices (a Warrior sees different options than a Scholar)
 - If the player has items that fit the situation, offer a choice that uses them
+- At least one choice should involve interacting with an NPC (talk, barter, help, deceive, challenge) when NPCs are present
+- Consider offering a "scavenge / search the area" choice when resources are present
 - Choices should have clear consequences — the hint text tells the player what to expect
-- Item gained: only when the scene genuinely provides one. Not every scene.
 
 Return ONLY valid JSON:
 {
   "sceneTitle": "Short title, 3-6 words",
   "narrative": "3-5 SHORT paragraphs separated by \\n\\n",
   "location": "region name",
+  "npcsPresent": [
+    {"name":"Name","role":"role/occupation","faction":"faction name or null","description":"1 short sentence","traits":["trait1","trait2"],"initialDisposition":0}
+  ],
+  "environmentalResources": [
+    {"name":"what it is","type":"herb|tool|currency|document|curio|food|weapon","description":"1 short sentence"}
+  ],
   "choices": [
-    {"id":"a","text":"Clear action in plain language","consequence":"What might happen","affectsFaction":"name or null","standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
-    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
-    {"id":"c","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null},
-    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null}
+    {"id":"a","text":"Clear action in plain language","consequence":"What might happen","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
+    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
+    {"id":"c","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
+    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null}
   ],
   "worldPulse": "One sentence about wider world (optional)"
 }
 
-itemGained: null OR {"name":"specific name","description":"1-2 sentences","history":"1-2 sentences about its origin","usefulFor":"1 sentence on situations where it helps"}
-itemLost: null OR the name of an item already in inventory
-insightGained: null OR "a short piece of world knowledge"
-healthChange: integer from -30 to +20, or 0`,
-      { maxTokens: 1300 }
+FIELD NOTES:
+- npcsPresent: 1-3 entries. Reuse names from LOCAL NPCS when that NPC is still in the scene.
+- environmentalResources: 0-3 entries. If nothing makes sense, use [].
+- itemGained: null OR {"name":"specific name","description":"1-2 sentences","history":"1-2 sentences about its origin","usefulFor":"1 sentence on situations where it helps"}
+- itemLost: null OR the name of an item already in inventory
+- insightGained: null OR "a short piece of world knowledge"
+- healthChange: integer from -30 to +20, or 0
+- npcInteraction: null OR exact name of an NPC in npcsPresent — marks the choice as targeting that NPC
+- npcDispositionChange: integer from -40 to +40 to shift how that NPC feels about the player (only matters with npcInteraction)
+- scavengeTarget: null OR exact name of a resource in environmentalResources — picking this choice takes that resource into inventory`,
+      { maxTokens: 1800 }
     );
 
     const scene = parseJsonResponse(raw);
@@ -2037,6 +2205,58 @@ healthChange: integer from -30 to +20, or 0`,
     // Update location
     if (scene.location) adv.currentRegion = scene.location;
     adv.currentChoices = scene.choices || [];
+
+    // Merge NPCs into the persistent roster
+    const currentLoc = adv.currentRegion || 'unknown';
+    if (Array.isArray(scene.npcsPresent)) {
+      scene.npcsPresent.forEach(n => {
+        if (!n || !n.name) return;
+        const key = n.name.toLowerCase().trim();
+        const existing = adv.npcs[key];
+        if (existing) {
+          // Update what we know — but keep disposition we've built up
+          existing.role        = n.role || existing.role;
+          existing.faction     = n.faction || existing.faction;
+          existing.description = n.description || existing.description;
+          existing.traits      = Array.isArray(n.traits) ? n.traits : existing.traits;
+          existing.region      = currentLoc;
+          existing.lastSeenChapter = adv.chapter;
+        } else {
+          adv.npcs[key] = {
+            id:               key,
+            name:             n.name,
+            role:             n.role || 'stranger',
+            faction:          n.faction || null,
+            description:      n.description || '',
+            traits:           Array.isArray(n.traits) ? n.traits.slice(0, 3) : [],
+            disposition:      typeof n.initialDisposition === 'number'
+                                ? Math.max(-100, Math.min(100, n.initialDisposition))
+                                : 0,
+            region:           currentLoc,
+            firstMetChapter:  adv.chapter,
+            lastSeenChapter:  adv.chapter,
+            alive:            true,
+            relationshipNote: '',
+          };
+        }
+      });
+    }
+
+    // Merge environmental resources at this location
+    if (Array.isArray(scene.environmentalResources)) {
+      if (!adv.environment[currentLoc]) adv.environment[currentLoc] = [];
+      const existingNames = new Set(adv.environment[currentLoc].map(e => e.name.toLowerCase()));
+      scene.environmentalResources.forEach(r => {
+        if (!r || !r.name) return;
+        if (existingNames.has(r.name.toLowerCase())) return;
+        adv.environment[currentLoc].push({
+          name:           String(r.name),
+          type:           String(r.type || 'curio'),
+          description:    String(r.description || ''),
+          takenInChapter: null,
+        });
+      });
+    }
 
     // Render narrative
     const narHtml = (scene.narrative || '')
@@ -2048,14 +2268,17 @@ healthChange: integer from -30 to +20, or 0`,
     $('advNarrative').innerHTML = narHtml || '<div class="adv-empty">The Oracle is silent.</div>';
     $('advSceneLabel').textContent = scene.sceneTitle || adv.currentRegion || W.worldName;
 
-    // Render choices
+    // Render choices — add NPC and scavenge visual flags
     $('advChoices').innerHTML = (scene.choices || []).map(c => {
       const hasEffect = c.affectsFaction && c.standingChange !== 0;
       const sign      = c.standingChange > 0 ? '+' : '';
       const effectTip = hasEffect ? ` · ${c.affectsFaction} ${sign}${c.standingChange}` : '';
+      const npcTag    = c.npcInteraction ? `<span class="adv-choice-tag adv-choice-tag-npc">👤 ${esc(c.npcInteraction)}</span>` : '';
+      const scavTag   = c.scavengeTarget ? `<span class="adv-choice-tag adv-choice-tag-scav">◈ take</span>` : '';
       return `
         <button class="adv-choice-btn" data-choice-id="${esc(c.id)}">
           <span class="adv-choice-text">→ ${esc(c.text)}</span>
+          <span class="adv-choice-meta">${npcTag}${scavTag}</span>
           ${c.consequence ? `<span class="adv-choice-hint">${esc(c.consequence)}${effectTip}</span>` : ''}
         </button>`;
     }).join('');
@@ -2072,6 +2295,9 @@ healthChange: integer from -30 to +20, or 0`,
       renderMiniMapView();
     }
 
+    // Render NPC cards and environment panel
+    renderAdventureNpcs();
+    renderAdventureEnvironment();
     updatePanelAdventure();
 
   } catch (err) {
@@ -2127,6 +2353,43 @@ async function makeAdventureChoice(choiceId) {
     inv.keyInsights.push({ text: choice.insightGained, chapter: adv.chapter - 1 });
     toastLines.push(`☽ Insight: ${choice.insightGained.slice(0, 40)}${choice.insightGained.length > 40 ? '…' : ''}`);
   }
+
+  // NPC disposition shift
+  if (choice.npcInteraction && typeof choice.npcDispositionChange === 'number' && choice.npcDispositionChange !== 0) {
+    const key = String(choice.npcInteraction).toLowerCase().trim();
+    const npc = adv.npcs[key];
+    if (npc) {
+      npc.disposition = Math.max(-100, Math.min(100, (npc.disposition || 0) + choice.npcDispositionChange));
+      npc.lastSeenChapter = adv.chapter - 1;
+      const sign = choice.npcDispositionChange > 0 ? '+' : '';
+      toastLines.push(`👤 ${npc.name} ${sign}${choice.npcDispositionChange}`);
+      // Note the interaction so future prompts keep tone consistent
+      if (choice.npcDispositionChange >= 30) npc.relationshipNote = 'impressed by you';
+      else if (choice.npcDispositionChange <= -30) npc.relationshipNote = 'wary of you';
+    }
+  }
+
+  // Scavenge — take a listed environmental resource and convert to inventory item
+  if (choice.scavengeTarget && typeof choice.scavengeTarget === 'string') {
+    const loc = adv.currentRegion || 'unknown';
+    const resources = adv.environment[loc] || [];
+    const target = resources.find(r =>
+      r.name.toLowerCase() === choice.scavengeTarget.toLowerCase() && r.takenInChapter == null
+    );
+    if (target) {
+      target.takenInChapter = adv.chapter - 1;
+      inv.items.push({
+        name:            target.name,
+        description:     target.description || `A ${target.type} found in ${loc}.`,
+        history:         `Scavenged from ${loc} during chapter ${adv.chapter - 1}.`,
+        usefulFor:       typeReuseHint(target.type),
+        obtainedChapter: adv.chapter - 1,
+        isStarter:       false,
+      });
+      toastLines.push(`◈ Scavenged: ${target.name}`);
+    }
+  }
+
   if (toastLines.length) showToast(toastLines.join(' · '));
 
   // Log to journey
@@ -2152,6 +2415,8 @@ async function makeAdventureChoice(choiceId) {
   renderFactionStandings();
   renderAdventureHealth();
   renderAdventureInventory();
+  renderAdventureNpcs();
+  renderAdventureEnvironment();
   saveCurrentWorld();
 
   // Show choice was selected, brief moment before next scene
@@ -2290,6 +2555,7 @@ function startLegacyAdventure() {
     playerOrigin: null, playerBg: '', playerArchetype: null,
     factionStanding: inheritedStandings,
     currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
+    npcs: {}, environment: {},
     legacyChain: preservedLegacy,
     // Legacy-specific fields — flagged so beginAdventure can reference them
     _inheritedFrom: predecessor.name,
@@ -2957,6 +3223,8 @@ function bindEvents() {
             renderFactionStandings();
             renderAdventureHealth();
             renderAdventureInventory();
+            renderAdventureNpcs();
+            renderAdventureEnvironment();
             $('advChapterBadge').textContent = `Chapter ${AppState.adventure.chapter}`;
             // Rebuild journey log
             const logEl = $('advLog');

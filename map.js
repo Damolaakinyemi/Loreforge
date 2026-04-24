@@ -465,6 +465,135 @@ function drawLegend(svg, x, y, novaYear) {
   svg.appendChild(g);
 }
 
+// ─── UNIFIED LEGEND PANEL (top-right, collapsible) ───────────
+/**
+ * Single compact legend that replaces the three cluttered bottom-left corners.
+ * Pinned top-right. Click the header to collapse/expand.
+ *
+ * @param {SVGElement} svg
+ * @param {number}  vw
+ * @param {string}  mode      'illustrated' | 'political' | 'stability'
+ * @param {object[]} items     [{ swatch:'circle'|'square'|'settlement', color, label, power? }]
+ * @param {string}  title     e.g. 'FACTIONS'
+ * @param {number}  novaYear
+ */
+function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
+  // Keep the list manageable — overflow is shown as "+N more"
+  const MAX_ROWS   = 8;
+  const overflow   = Math.max(0, items.length - MAX_ROWS);
+  const visible    = items.slice(0, MAX_ROWS);
+
+  const pad   = 10;
+  const rowH  = 14;
+  const headH = 20;
+  const footH = novaYear > 0 ? 14 : 0;
+  const w     = 150;
+  const h     = headH + visible.length * rowH + (overflow ? rowH : 0) + footH + pad;
+  const x     = vw - w - 14;
+  const y     = 14;
+
+  const g = mk('g');
+  g.setAttribute('class', `lf-legend lf-legend-${mode}`);
+
+  // Backing card
+  g.appendChild(mk('rect', {
+    x, y, width:w, height:h, rx:4,
+    fill: 'rgba(10,8,6,0.85)',
+    stroke: 'rgba(201,168,76,0.35)',
+    'stroke-width': 0.8,
+  }));
+
+  // Header strip
+  g.appendChild(mk('rect', {
+    x, y, width:w, height:headH, rx:4,
+    fill: 'rgba(201,168,76,0.12)',
+  }));
+  g.appendChild(mk('line', {
+    x1:x, y1:y+headH, x2:x+w, y2:y+headH,
+    stroke:'rgba(201,168,76,0.3)', 'stroke-width':0.6,
+  }));
+  g.appendChild(mk('text', {
+    x: x + 10, y: y + 13,
+    'font-family':'Cinzel,serif', 'font-size':9,
+    fill:'#c9a84c', 'letter-spacing':1.5, 'font-weight':'600',
+  }, title));
+
+  // Collapse chevron
+  const chev = mk('text', {
+    x: x + w - 12, y: y + 14,
+    'text-anchor':'end',
+    'font-family':'Cinzel,serif', 'font-size':10,
+    fill:'#c9a84c', cursor:'pointer',
+  }, '–');
+  g.appendChild(chev);
+
+  // Body group — can be hidden on click
+  const body = mk('g');
+  body.setAttribute('class', 'lf-legend-body');
+
+  visible.forEach((item, i) => {
+    const ly = y + headH + 10 + i * rowH;
+    const sx = x + 12;
+
+    // Swatch
+    if (item.swatch === 'square') {
+      body.appendChild(mk('rect', { x:sx, y:ly-6, width:10, height:8, fill:item.color, rx:1 }));
+    } else if (item.swatch === 'settlement') {
+      const sg = mk('g');
+      drawSettlement(sg, sx + 5, ly - 2, item.power || 40, '', '#c9a84c');
+      body.appendChild(sg);
+    } else {
+      body.appendChild(mk('circle', { cx:sx+5, cy:ly-2, r:4, fill:item.color }));
+    }
+
+    body.appendChild(mk('text', {
+      x: sx + 18, y: ly + 1,
+      'font-family':'Crimson Pro,serif', 'font-size':9,
+      fill:'#d8cbad',
+    }, item.label.slice(0, 20)));
+  });
+
+  if (overflow) {
+    const ly = y + headH + 10 + visible.length * rowH;
+    body.appendChild(mk('text', {
+      x: x + 12, y: ly + 1,
+      'font-family':'Crimson Pro,serif', 'font-size':8.5,
+      fill:'rgba(200,184,154,0.65)', 'font-style':'italic',
+    }, `+ ${overflow} more`));
+  }
+
+  if (novaYear > 0) {
+    const ly = y + h - 5;
+    body.appendChild(mk('line', {
+      x1: x + 10, y1: ly - 8, x2: x + w - 10, y2: ly - 8,
+      stroke:'rgba(201,168,76,0.2)', 'stroke-width':0.5,
+    }));
+    body.appendChild(mk('text', {
+      x: x + w/2, y: ly,
+      'text-anchor':'middle',
+      'font-family':'Cinzel,serif', 'font-size':8,
+      fill:'rgba(201,168,76,0.7)', 'font-style':'italic',
+    }, `Year ${novaYear}`));
+  }
+
+  g.appendChild(body);
+
+  // Toggle handler
+  let open = true;
+  const toggle = () => {
+    open = !open;
+    body.style.display = open ? '' : 'none';
+    chev.textContent   = open ? '–' : '+';
+    // Shrink backdrop when collapsed
+    g.querySelector('rect').setAttribute('height', open ? h : headH);
+  };
+  chev.addEventListener('click', toggle);
+  // Also allow clicking the header strip
+  g.querySelectorAll('rect')[1]?.addEventListener('click', toggle);
+
+  svg.appendChild(g);
+}
+
 // ─── TITLE SCROLL ─────────────────────────────────────────────
 function drawTitleScroll(svg, worldName, genre, cx, y) {
   const g = mk('g');
@@ -651,20 +780,31 @@ export function renderIllustratedMap(svgId, world, novaState, onRegionClick, ove
     const g = mk('g');
     g.style.cursor = 'pointer';
 
-    // Landmass shadow
-    const shadowPath = makeLandmassPath(cx + 3, cy + 4, radius + 5, region.name + '_shadow', 0.3);
-    g.appendChild(mk('path', { d:shadowPath, fill:PARCHMENT.inkFaint, 'fill-opacity':0.12, stroke:'none' }));
+    // Landmass shadow — deeper + softer for more paper-depth feel
+    const shadowPath = makeLandmassPath(cx + 3, cy + 5, radius + 6, region.name + '_shadow', 0.3);
+    g.appendChild(mk('path', { d:shadowPath, fill:PARCHMENT.ink, 'fill-opacity':0.18, stroke:'none' }));
 
-    // Landmass body
-    const landPath = makeLandmassPath(cx, cy, radius, region.name, 0.35);
+    // Coastline halo — a soft sea-tinted band just outside the landmass
+    const halo = makeLandmassPath(cx, cy, radius + 2.5, region.name + '_halo', 0.3);
     g.appendChild(mk('path', {
+      d: halo, fill:'none',
+      stroke: PARCHMENT.seaDeep,
+      'stroke-width': 1.4,
+      'stroke-opacity': 0.22,
+    }));
+
+    // Landmass body — tag it so hover only affects the land, not the shadow
+    const landPath = makeLandmassPath(cx, cy, radius, region.name, 0.35);
+    const landEl   = mk('path', {
       d: landPath,
       fill: profile.land,
       'fill-opacity': 0.82,
       stroke: PARCHMENT.ink,
       'stroke-width': 1.0,
       'stroke-opacity': 0.7,
-    }));
+    });
+    landEl.setAttribute('data-role', 'land');
+    g.appendChild(landEl);
 
     // Landmass inner highlight (slightly lighter, smaller)
     const innerPath = makeLandmassPath(cx - 2, cy - 2, radius * 0.75, region.name + '_inner', 0.25);
@@ -757,8 +897,15 @@ export function renderIllustratedMap(svgId, world, novaState, onRegionClick, ove
   // ── Compass rose (bottom-right area) ──────────────────────
   drawCompassRose(svg, vw - 70, vh - 70, 42);
 
-  // ── Legend (bottom-left) ──────────────────────────────────
-  drawLegend(svg, 18, vh - 112, novaState?.year || 0);
+  // ── Legend (top-right, unified) ───────────────────────────
+  const settlementItems = [
+    { swatch:'settlement', power:10, label:'Hamlet' },
+    { swatch:'settlement', power:30, label:'Village' },
+    { swatch:'settlement', power:55, label:'Town' },
+    { swatch:'settlement', power:72, label:'City' },
+    { swatch:'settlement', power:95, label:'Capital' },
+  ];
+  drawUnifiedLegend(svg, vw, 'illustrated', settlementItems, 'SETTLEMENTS', novaState?.year || 0);
 
   // ── Title scroll (top center) ─────────────────────────────
   drawTitleScroll(svg, world.worldName || 'Unknown World', world.genre || '', vw / 2, 14);
@@ -959,33 +1106,13 @@ function renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh) {
     svg.appendChild(g);
   });
 
-  // Legend of faction colors in corner
-  const legendX = 18, legendY = vh - (factions.length * 18) - 28;
-  svg.appendChild(mk('rect', {
-    x: legendX - 8, y: legendY - 12,
-    width: 170, height: factions.length * 18 + 22,
-    rx: 4,
-    fill: 'rgba(10,8,6,0.92)',
-    stroke: 'rgba(201,168,76,0.3)',
-    'stroke-width': 0.8,
+  // Legend (top-right, unified)
+  const factionItems = factions.map(f => ({
+    swatch: 'circle',
+    color:  factionColors[f.name],
+    label:  f.name,
   }));
-  svg.appendChild(mk('text', {
-    x: legendX, y: legendY,
-    'font-family': 'Cinzel,serif',
-    'font-size': 8,
-    fill: '#c9a84c',
-    'letter-spacing': 1.5,
-  }, 'FACTIONS'));
-  factions.forEach((f, i) => {
-    const ly = legendY + 15 + i * 15;
-    svg.appendChild(mk('circle', { cx: legendX + 6, cy: ly - 3, r: 4, fill: factionColors[f.name] }));
-    svg.appendChild(mk('text', {
-      x: legendX + 16, y: ly,
-      'font-family': 'Crimson Pro,serif',
-      'font-size': 9,
-      fill: '#c8b89a',
-    }, f.name.slice(0, 20)));
-  });
+  drawUnifiedLegend(svg, vw, 'political', factionItems, 'FACTIONS', novaState?.year || 0);
 
   // Title
   svg.appendChild(mk('text', {
@@ -1111,40 +1238,15 @@ function renderStabilityMap(svg, world, novaState, onRegionClick, vw, vh) {
     svg.appendChild(g);
   });
 
-  // Legend
-  const legendItems = [
-    { color: '#4a9a6a', label: 'Peaceful (85-100)' },
-    { color: '#9a9a4c', label: 'Calm (65-85)' },
-    { color: '#c9a84c', label: 'Tense (45-65)' },
-    { color: '#c96020', label: 'Unrest (25-45)' },
-    { color: '#c04040', label: 'Crisis (<25)' },
+  // Legend (top-right, unified)
+  const stabilityItems = [
+    { swatch: 'square', color: '#4a9a6a', label: 'Peaceful (85-100)' },
+    { swatch: 'square', color: '#9a9a4c', label: 'Calm (65-85)' },
+    { swatch: 'square', color: '#c9a84c', label: 'Tense (45-65)' },
+    { swatch: 'square', color: '#c96020', label: 'Unrest (25-45)' },
+    { swatch: 'square', color: '#c04040', label: 'Crisis (<25)' },
   ];
-  const lx = 18, ly = vh - legendItems.length * 16 - 28;
-  svg.appendChild(mk('rect', {
-    x: lx - 8, y: ly - 12,
-    width: 170, height: legendItems.length * 16 + 22,
-    rx: 4,
-    fill: 'rgba(10,8,6,0.92)',
-    stroke: 'rgba(201,168,76,0.3)',
-    'stroke-width': 0.8,
-  }));
-  svg.appendChild(mk('text', {
-    x: lx, y: ly,
-    'font-family': 'Cinzel,serif',
-    'font-size': 8,
-    fill: '#c9a84c',
-    'letter-spacing': 1.5,
-  }, 'STABILITY'));
-  legendItems.forEach((item, i) => {
-    const y = ly + 15 + i * 14;
-    svg.appendChild(mk('rect', { x: lx, y: y - 6, width: 10, height: 8, fill: item.color }));
-    svg.appendChild(mk('text', {
-      x: lx + 16, y: y,
-      'font-family': 'Crimson Pro,serif',
-      'font-size': 8.5,
-      fill: '#c8b89a',
-    }, item.label));
-  });
+  drawUnifiedLegend(svg, vw, 'stability', stabilityItems, 'STABILITY', novaState?.year || 0);
 
   // Title
   svg.appendChild(mk('text', {

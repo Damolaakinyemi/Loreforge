@@ -495,27 +495,27 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
   const g = mk('g');
   g.setAttribute('class', `lf-legend lf-legend-${mode}`);
 
-  // Backing card
+  // Backing card — warm cream to match the parchment theme
   g.appendChild(mk('rect', {
     x, y, width:w, height:h, rx:4,
-    fill: 'rgba(10,8,6,0.85)',
-    stroke: 'rgba(201,168,76,0.35)',
+    fill: 'rgba(247, 238, 216, 0.95)',
+    stroke: 'rgba(138, 100, 38, 0.4)',
     'stroke-width': 0.8,
   }));
 
-  // Header strip
+  // Header strip — subtle gold wash
   g.appendChild(mk('rect', {
     x, y, width:w, height:headH, rx:4,
-    fill: 'rgba(201,168,76,0.12)',
+    fill: 'rgba(166, 124, 47, 0.12)',
   }));
   g.appendChild(mk('line', {
     x1:x, y1:y+headH, x2:x+w, y2:y+headH,
-    stroke:'rgba(201,168,76,0.3)', 'stroke-width':0.6,
+    stroke:'rgba(138, 100, 38, 0.3)', 'stroke-width':0.6,
   }));
   g.appendChild(mk('text', {
     x: x + 10, y: y + 13,
     'font-family':'Cinzel,serif', 'font-size':9,
-    fill:'#c9a84c', 'letter-spacing':1.5, 'font-weight':'600',
+    fill:'#8a6426', 'letter-spacing':1.5, 'font-weight':'600',
   }, title));
 
   // Collapse chevron
@@ -523,7 +523,7 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
     x: x + w - 12, y: y + 14,
     'text-anchor':'end',
     'font-family':'Cinzel,serif', 'font-size':10,
-    fill:'#c9a84c', cursor:'pointer',
+    fill:'#8a6426', cursor:'pointer',
   }, '–');
   g.appendChild(chev);
 
@@ -540,7 +540,7 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
       body.appendChild(mk('rect', { x:sx, y:ly-6, width:10, height:8, fill:item.color, rx:1 }));
     } else if (item.swatch === 'settlement') {
       const sg = mk('g');
-      drawSettlement(sg, sx + 5, ly - 2, item.power || 40, '', '#c9a84c');
+      drawSettlement(sg, sx + 5, ly - 2, item.power || 40, '', '#3d2b0e');
       body.appendChild(sg);
     } else {
       body.appendChild(mk('circle', { cx:sx+5, cy:ly-2, r:4, fill:item.color }));
@@ -549,7 +549,7 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
     body.appendChild(mk('text', {
       x: sx + 18, y: ly + 1,
       'font-family':'Crimson Pro,serif', 'font-size':9,
-      fill:'#d8cbad',
+      fill:'#3d2418',
     }, item.label.slice(0, 20)));
   });
 
@@ -558,7 +558,7 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
     body.appendChild(mk('text', {
       x: x + 12, y: ly + 1,
       'font-family':'Crimson Pro,serif', 'font-size':8.5,
-      fill:'rgba(200,184,154,0.65)', 'font-style':'italic',
+      fill:'rgba(94, 61, 40, 0.7)', 'font-style':'italic',
     }, `+ ${overflow} more`));
   }
 
@@ -566,13 +566,13 @@ function drawUnifiedLegend(svg, vw, mode, items, title, novaYear) {
     const ly = y + h - 5;
     body.appendChild(mk('line', {
       x1: x + 10, y1: ly - 8, x2: x + w - 10, y2: ly - 8,
-      stroke:'rgba(201,168,76,0.2)', 'stroke-width':0.5,
+      stroke:'rgba(138, 100, 38, 0.25)', 'stroke-width':0.5,
     }));
     body.appendChild(mk('text', {
       x: x + w/2, y: ly,
       'text-anchor':'middle',
       'font-family':'Cinzel,serif', 'font-size':8,
-      fill:'rgba(201,168,76,0.7)', 'font-style':'italic',
+      fill:'rgba(138, 100, 38, 0.8)', 'font-style':'italic',
     }, `Year ${novaYear}`));
   }
 
@@ -1008,15 +1008,32 @@ function renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh) {
   const factionColors = {};
   factions.forEach((f, i) => { factionColors[f.name] = FACTION_COLORS[i % FACTION_COLORS.length]; });
 
-  // Match each region to its most-likely controlling faction.
-  // Heuristic: check if any faction's region field mentions this region; otherwise use most powerful faction as ambient.
+  // Match each region to its controlling faction.
+  // Priority: (1) explicit region.controllingFaction set at generation time,
+  //           (2) faction whose territory/region field genuinely matches,
+  //           (3) stable round-robin as last resort.
   function dominantFaction(region) {
-    const match = factions.find(f =>
-      (f.region || '').toLowerCase().includes(region.name.toLowerCase().split(' ')[0].slice(0, 4)) ||
-      (f.territory || '').toLowerCase().includes(region.name.toLowerCase().split(' ')[0].slice(0, 4))
-    );
-    if (match) return match;
-    // Use region index modulo faction count as fallback so coverage is visible
+    // (1) Explicit assignment from world generation
+    if (region.controllingFaction) {
+      const exact = factions.find(f =>
+        (f.name || '').toLowerCase() === String(region.controllingFaction).toLowerCase()
+      );
+      if (exact) return exact;
+    }
+
+    // (2) Substring match — but require the FULL first word of the region name,
+    // not just the first 4 characters. "Verdant" accidentally matches "verd*"
+    // which is worse than no match at all.
+    const regionFirstWord = (region.name || '').toLowerCase().split(/\s+/)[0];
+    if (regionFirstWord && regionFirstWord.length >= 4) {
+      const match = factions.find(f => {
+        const terr = `${f.region || ''} ${f.territory || ''}`.toLowerCase();
+        return terr.includes(regionFirstWord) || terr.includes(region.name.toLowerCase());
+      });
+      if (match) return match;
+    }
+
+    // (3) Stable round-robin so map coverage is deterministic across renders
     const idx = regions.indexOf(region);
     return factions[idx % Math.max(1, factions.length)] || null;
   }
@@ -1064,7 +1081,7 @@ function renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh) {
     g.appendChild(mk('rect', {
       x: cx - 50, y: cy + radius + 4,
       width: 100, height: 14, rx: 2,
-      fill: 'rgba(10,8,6,0.9)',
+      fill: 'rgba(247, 238, 216, 0.92)',
       stroke: color,
       'stroke-width': 0.8,
     }));
@@ -1073,7 +1090,7 @@ function renderPoliticalMap(svg, world, novaState, onRegionClick, vw, vh) {
       'text-anchor': 'middle',
       'font-family': 'Cinzel,serif',
       'font-size': 8,
-      fill: '#c8b89a',
+      fill: '#3d2418',
       'letter-spacing': 1,
     }, (region.name || '').toUpperCase().slice(0, 14)));
 

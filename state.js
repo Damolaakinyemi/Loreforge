@@ -183,6 +183,19 @@ export const AppState = {
     items: [],           // [{name, description, history, usefulFor, obtainedChapter, isStarter}]
     health: 100,
     maxHealth: 100,
+
+    // ── Pressure meters (replaces the role health played in scene logic) ──
+    // Exhaustion 0..100 — physical/mental wear. Rises with effort and time.
+    // At ≥85 the player is at risk of collapse; constrains physical choices.
+    exhaustion:    0,
+    maxExhaustion: 100,
+
+    // Suspicion 0..100 — how watched/wanted the player is. Rises from being
+    // seen doing shady things or scavenging in guarded zones. At ≥75 a capture
+    // event becomes likely; affects how strangers react.
+    suspicion:    0,
+    maxSuspicion: 100,
+
     keyInsights: [],     // important lore the player has learned
     achievements: [],    // [{name, description, chapter}]
   },
@@ -213,6 +226,19 @@ export const AppState = {
     history: [],
     currentChoices: [],
     worldImpacts: [],
+
+    // ── Player status — replaces the binary alive/dead model. ──
+    // active: free, normal play
+    // captured: held by a faction or hostile NPC; choices limited to escape paths
+    // disgraced: faction(s) you depend on have turned against you; recovery via amends
+    // exhausted: collapsed; next scene is forced rest, then return to active
+    // dead: legacy chain triggered
+    playerStatus: 'active',
+    // Context object whose shape depends on status:
+    //   captured  → { capturedBy: 'faction or npc name', capturedReason: '...', sinceChapter: n }
+    //   disgraced → { disgracedWith: ['faction1', ...], cause: '...', sinceChapter: n }
+    //   exhausted → { sinceChapter: n }
+    statusContext: null,
 
     // NPC system — persistent cast of characters across scenes.
     // Each NPC: { id, name, role, faction, description, disposition (-100..100),
@@ -568,6 +594,16 @@ export function loadAdventureSave(idx) {
   // Backfill new fields added after this save was made
   if (!AppState.adventure.npcs)        AppState.adventure.npcs = {};
   if (!AppState.adventure.environment) AppState.adventure.environment = {};
+  if (!AppState.adventure.playerStatus) AppState.adventure.playerStatus = 'active';
+  if (AppState.adventure.statusContext === undefined) AppState.adventure.statusContext = null;
+  if (typeof AppState.adventureInventory.exhaustion !== 'number') {
+    AppState.adventureInventory.exhaustion = 0;
+    AppState.adventureInventory.maxExhaustion = 100;
+  }
+  if (typeof AppState.adventureInventory.suspicion !== 'number') {
+    AppState.adventureInventory.suspicion = 0;
+    AppState.adventureInventory.maxSuspicion = 100;
+  }
   return { ok: true };
 }
 

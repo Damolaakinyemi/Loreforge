@@ -313,7 +313,9 @@
             <div class="adv-choices-panel">
               <div class="adv-character-card" id="advCharacterCard"></div>
               <div class="adv-health-bar" id="advHealthBar"></div>
+              <div class="adv-pressure" id="advPressure"></div>
               <div class="adv-standing-bars" id="advStandingBars"></div>
+              <div class="adv-status-banner" id="advStatusBanner" style="display:none"></div>
               <div class="adv-choices-header">What do you do?</div>
               <div class="adv-choices" id="advChoices"></div>
               <div class="adv-npcs" id="advNpcs"></div>
@@ -383,7 +385,10 @@
       <h3>🔑 Anthropic API Key</h3>
       <div class="api-key-explain">
         <p>Loreforge calls Anthropic's API directly from your browser. Your key is needed to generate worlds, simulations, and adventures.</p>
-        <p class="api-key-note"><strong>Your key is private.</strong> It's stored only in your browser's localStorage. It is never sent to any server except Anthropic. Other users of this site cannot see or use it.</p>
+        <p class="api-key-note"><strong>Your key is stored only in this browser's localStorage</strong> and is sent only to api.anthropic.com — never to any other server.</p>
+        <div class="api-key-warning">
+          <strong>⚠️ Security caveat:</strong> Because the key lives in browser storage, any script running on this page can read it. Only use this on a machine you trust, avoid installing unknown browser extensions, and <strong>set a usage limit</strong> on your key in the Anthropic console. If you plan to share this app or host it publicly, route requests through a backend instead.
+        </div>
         <p class="api-key-note">Don't have one? Get a key at <span class="api-key-link">console.anthropic.com</span>.</p>
       </div>
       <div class="field">

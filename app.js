@@ -871,13 +871,27 @@ async function forgeWorldFromInterview() {
   try {
     $('loadingSub').textContent='Placing regions on the map…';
     const userRegions=(a.regions||[]).filter(r=>r.name);
+    const userFactions=(a.factions||[]).filter(f=>f.name);
+
+    // Build faction context for the placement prompt — let the LLM choose
+    // which faction controls each region instead of relying on later guesswork
+    const factionList = userFactions.length
+      ? userFactions.map(f => `${f.name}${f.region ? ` (based in ${f.region})` : ''}`).join('; ')
+      : 'no factions defined';
 
     const regRaw=await callApi(
-      `Assign map coordinates and visual properties for these regions in world "${a.worldName}" (${a.genre}).
+      `Assign map coordinates and a controlling faction for each region in world "${a.worldName}" (${a.genre}).
+
 Regions: ${userRegions.map((r,i)=>`${i+1}. ${r.name} — ${r.type||'unknown terrain'}`).join('; ')}
-Canvas is 900x580. Spread regions across the full area with good spacing. Use dark muted fantasy hex colors.
-Return ONLY a JSON array, one object per region: {"name":"exact name","x":300,"y":280,"radius":70,"color":"#4a6a8a","id":"r0"}`,
-      {maxTokens:600}
+Factions: ${factionList}
+
+For each region:
+- Place x,y on a 900x580 canvas, spread evenly with good spacing
+- Pick a muted fantasy hex color
+- Assign the most plausible controllingFaction by name (use one of the faction names listed above, or null if no faction fits — e.g., wilderness, neutral zones, contested borderlands)
+
+Return ONLY a JSON array, one object per region: {"name":"exact name","x":300,"y":280,"radius":70,"color":"#4a6a8a","id":"r0","controllingFaction":"faction name or null"}`,
+      {maxTokens:700}
     );
 
     let coords=[];
@@ -886,14 +900,26 @@ Return ONLY a JSON array, one object per region: {"name":"exact name","x":300,"y
       coords=JSON.parse(cl.slice(cl.indexOf('['),cl.lastIndexOf(']')+1));
     } catch(_) {}
 
+    // Build a faction-name lookup so we can validate the LLM's choice
+    const factionNames = new Set(userFactions.map(f => f.name.toLowerCase()));
+
     const finalRegions=userRegions.map((r,i)=>{
       const c=coords.find(x=>x.name===r.name)||coords[i]||{};
+      // Validate the controllingFaction — only accept a real faction name
+      let cf = null;
+      if (c.controllingFaction && typeof c.controllingFaction === 'string') {
+        const proposed = c.controllingFaction.trim();
+        if (factionNames.has(proposed.toLowerCase())) {
+          cf = userFactions.find(f => f.name.toLowerCase() === proposed.toLowerCase()).name;
+        }
+      }
       return {
         id:c.id||`r${i}`,name:r.name,type:r.type||'',description:r.description||'',secret:r.secret||'',
         x:Math.max(80,Math.min(820,parseFloat(c.x)||100+i*120)),
         y:Math.max(80,Math.min(500,parseFloat(c.y)||200+((i%2)*160))),
         radius:Math.max(50,Math.min(100,parseFloat(c.radius)||70)),
         color:c.color||['#4a6a8a','#5a4a6a','#4a6a4a','#6a4a4a','#4a5a6a','#6a5a4a'][i%6],
+        controllingFaction: cf,
       };
     });
 
@@ -1672,10 +1698,14 @@ function resetAdventure(fullReset = false) {
     factionStanding: {}, currentRegion: null, history: [],
     currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
+    playerStatus: 'active', statusContext: null,
     legacyChain: preservedLegacy,
   };
   AppState.adventureInventory = {
-    items: [], health: 100, maxHealth: 100, keyInsights: [], achievements: [],
+    items: [], health: 100, maxHealth: 100,
+    exhaustion: 0, maxExhaustion: 100,
+    suspicion: 0,  maxSuspicion: 100,
+    keyInsights: [], achievements: [],
   };
   const setup = $('advSetup'), game = $('advGame');
   if (setup) setup.style.display = 'block';
@@ -1711,9 +1741,17 @@ async function beginAdventure() {
   // Max health gets a small bonus from strength attribute
   const strengthBonus = Math.round((adv.playerArchetype.stats.strength - 25) / 2);
   const maxHealth = Math.max(50, Math.min(150, 100 + strengthBonus));
+  // Endurance bonus to exhaustion ceiling — scholarly types tire faster
+  const endurance = Math.max(80, Math.min(140, 100 + strengthBonus));
   AppState.adventureInventory = {
-    items: [], health: maxHealth, maxHealth, keyInsights: [], achievements: [],
+    items: [], health: maxHealth, maxHealth,
+    exhaustion: 0, maxExhaustion: endurance,
+    suspicion: 0,  maxSuspicion: 100,
+    keyInsights: [], achievements: [],
   };
+  // Reset to active — legacy continuation may have set this elsewhere
+  adv.playerStatus = 'active';
+  adv.statusContext = null;
 
   // Switch panels
   const setup = $('advSetup'), game = $('advGame');
@@ -1723,6 +1761,8 @@ async function beginAdventure() {
   renderAdventureCharacterCard();
   renderFactionStandings();
   renderAdventureHealth();
+  renderAdventurePressure();
+  renderAdventureStatusBanner();
   renderAdventureInventory();
   renderAdventureNpcs();
   renderAdventureEnvironment();
@@ -1819,6 +1859,82 @@ function renderAdventureHealth() {
     </div>`;
 }
 
+/**
+ * Render the two pressure meters (exhaustion + suspicion) — sit beneath the
+ * health bar and replace it as the primary feel of "danger."
+ */
+function renderAdventurePressure() {
+  const inv = AppState.adventureInventory;
+  const container = $('advPressure');
+  if (!container) return;
+
+  const exPct = Math.round(100 * (inv.exhaustion || 0) / (inv.maxExhaustion || 100));
+  const exColor = exPct >= 85 ? 'var(--err)' : exPct >= 65 ? 'var(--heal)' : exPct >= 35 ? 'var(--warn)' : 'var(--gold-dim)';
+  const exLabel = exPct >= 85 ? 'Collapsing' : exPct >= 65 ? 'Worn' : exPct >= 35 ? 'Tired' : 'Fresh';
+
+  const suPct = Math.round(100 * (inv.suspicion || 0) / (inv.maxSuspicion || 100));
+  const suColor = suPct >= 75 ? 'var(--err)' : suPct >= 50 ? 'var(--heal)' : suPct >= 25 ? 'var(--warn)' : 'var(--gold-dim)';
+  const suLabel = suPct >= 75 ? 'Wanted' : suPct >= 50 ? 'Watched' : suPct >= 25 ? 'Whispered' : 'Unseen';
+
+  container.innerHTML = `
+    <div class="adv-pressure-row">
+      <div class="adv-pressure-label">Exhaustion</div>
+      <div class="adv-pressure-track"><div class="adv-pressure-fill" style="width:${exPct}%;background:${exColor}"></div></div>
+      <div class="adv-pressure-value" style="color:${exColor}">${exLabel}</div>
+    </div>
+    <div class="adv-pressure-row">
+      <div class="adv-pressure-label">Suspicion</div>
+      <div class="adv-pressure-track"><div class="adv-pressure-fill" style="width:${suPct}%;background:${suColor}"></div></div>
+      <div class="adv-pressure-value" style="color:${suColor}">${suLabel}</div>
+    </div>`;
+}
+
+/**
+ * Status banner — shown above choices when the player is captured, disgraced,
+ * or exhausted. Tells them what's happening and offers context.
+ */
+function renderAdventureStatusBanner() {
+  const adv = AppState.adventure;
+  const el  = $('advStatusBanner');
+  if (!el) return;
+  if (!adv.playerStatus || adv.playerStatus === 'active') {
+    el.innerHTML = '';
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  const ctxText = describeStatusContext(adv);
+  const map = {
+    captured:  { icon: '⛓', label: 'CAPTURED',  cls: 'adv-status-captured' },
+    disgraced: { icon: '✕', label: 'DISGRACED', cls: 'adv-status-disgraced' },
+    exhausted: { icon: '☽', label: 'EXHAUSTED', cls: 'adv-status-exhausted' },
+  };
+  const cfg = map[adv.playerStatus] || { icon: '·', label: adv.playerStatus.toUpperCase(), cls: '' };
+  el.className = `adv-status-banner ${cfg.cls}`;
+  el.innerHTML = `
+    <span class="adv-status-icon">${cfg.icon}</span>
+    <span class="adv-status-text">
+      <strong>${cfg.label}</strong>
+      <span class="adv-status-detail">${esc(ctxText)}</span>
+    </span>`;
+}
+
+/** Plain-language description of the current status context (for prompt + UI). */
+function describeStatusContext(adv) {
+  if (!adv.statusContext) return '';
+  if (adv.playerStatus === 'captured') {
+    return `held by ${adv.statusContext.capturedBy || 'enemies'} since chapter ${adv.statusContext.sinceChapter || '?'}`;
+  }
+  if (adv.playerStatus === 'disgraced') {
+    const list = (adv.statusContext.disgracedWith || []).join(', ') || 'multiple factions';
+    return `${list} have turned against you over: ${adv.statusContext.cause || 'recent events'}`;
+  }
+  if (adv.playerStatus === 'exhausted') {
+    return `collapsed since chapter ${adv.statusContext.sinceChapter || '?'}`;
+  }
+  return '';
+}
+
 /** Render the inventory list — items are clickable to see full details */
 function renderAdventureInventory() {
   const inv = AppState.adventureInventory;
@@ -1872,6 +1988,86 @@ function typeReuseHint(type) {
     weapon:   'Combat, intimidation, or ritual use.',
   };
   return m[type] || 'Something that may matter later.';
+}
+
+/**
+ * Normalize an NPC name into a stable key.
+ * Strips whitespace, lowercases, collapses internal spaces, removes trailing
+ * titles that the LLM sometimes adds ("Elara the Merchant" → "elara").
+ */
+function normalizeNpcName(name) {
+  if (!name) return '';
+  let s = String(name).trim().toLowerCase();
+  // Collapse multiple spaces
+  s = s.replace(/\s+/g, ' ');
+  // Strip diacritics (so "Ēlara" → "elara")
+  s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Drop common title suffixes — "elara the merchant" → "elara"
+  s = s.replace(/\s+(the|of|von|de|du|da)\s+.+$/i, '');
+  // Drop trailing punctuation
+  s = s.replace(/[.,;:!?'"`]+$/g, '');
+  return s;
+}
+
+/**
+ * Given an incoming NPC name, find a close-enough existing entry in the roster
+ * or return a fresh normalized key. Uses an edit-distance check against existing
+ * keys to catch typos like "Kaelin" vs "Kealin".
+ */
+function findOrCreateNpcKey(roster, incomingName) {
+  const norm = normalizeNpcName(incomingName);
+  if (!norm) return 'unknown';
+
+  // Exact match
+  if (roster[norm]) return norm;
+
+  // Fuzzy match — only for names of similar length (avoid "Kai" matching "Kairos")
+  for (const existingKey of Object.keys(roster)) {
+    if (Math.abs(existingKey.length - norm.length) > 2) continue;
+    if (levenshtein(existingKey, norm) <= 1 && norm.length >= 4) {
+      return existingKey;
+    }
+  }
+
+  return norm;
+}
+
+/** Minimal Levenshtein distance — small inputs only, O(n*m). */
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
+
+/**
+ * Prune NPCs not seen in the last `maxAge` chapters — but always keep
+ * strong allies or enemies (|disposition| >= 50) since they're story-relevant.
+ */
+function pruneStaleNpcs(adv, maxAge = 12) {
+  if (!adv.npcs) return;
+  const current = adv.chapter || 0;
+  for (const key of Object.keys(adv.npcs)) {
+    const n = adv.npcs[key];
+    if (!n) continue;
+    const lastSeen = n.lastSeenChapter || 0;
+    const age = current - lastSeen;
+    if (age <= maxAge) continue;
+    if (Math.abs(n.disposition || 0) >= 50) continue;  // keep story-relevant
+    if (n.alive === false) continue;                    // keep dead NPCs as memorials
+    delete adv.npcs[key];
+  }
 }
 
 /**
@@ -1974,13 +2170,16 @@ function renderAdventureEnvironment() {
   container.innerHTML = `
     <div class="adv-env-head">Here (${resources.length})</div>
     <div class="adv-env-list">
-      ${resources.map(r => `
-        <div class="adv-env-item" title="${esc(r.description || '')}">
+      ${resources.map(r => {
+        const risk = r.risk || 'safe';
+        return `
+        <div class="adv-env-item adv-env-risk-${risk}" title="${esc(r.description || '')}${risk !== 'safe' ? ` · risk: ${risk}` : ''}">
           <span class="adv-env-icon">${icons[r.type] || '◈'}</span>
           <span class="adv-env-name">${esc(r.name)}</span>
           <span class="adv-env-type">${esc(r.type || 'curio')}</span>
-        </div>
-      `).join('')}
+          ${risk !== 'safe' ? `<span class="adv-env-risk-badge">${risk}</span>` : ''}
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -2105,6 +2304,9 @@ async function generateAdventureScene(sceneType, prevChoice) {
     OPENING:      `Write the opening scene. The player is ${adv.playerName || 'a traveler'} from ${adv.playerOrigin?.name}, a member of ${adv.playerFaction?.name}. Begin in medias res — something is already happening. Ground the scene in specific lore details from the world.`,
     CONTINUATION: `Continue the story. The player just chose: "${prevChoice}". Generate the next scene flowing naturally from that choice and its consequences.`,
     CONSEQUENCE:  `The player made a significant choice. Show the immediate aftermath before moving the story forward.`,
+    CAPTURED:     `The player has been captured by ${adv.statusContext?.capturedBy || 'their enemies'} after: "${prevChoice}". They are imprisoned, restrained, or held under guard. Describe the captivity. Choices should focus on: persuading captors, finding weakness in security, biding time, or attempting escape (mark canCapture=false but escapeAttempt=true on escape options). At least one choice must be a non-escape that builds toward freedom (gather info, win sympathy, exploit something).`,
+    DISGRACED:    `The player is disgraced — ${(adv.statusContext?.disgracedWith || []).join(', ') || 'a faction'} actively wants them punished. The cause: "${adv.statusContext?.cause}". They are an outcast. Choices should focus on: rebuilding standing through service, fleeing the region entirely, finding an unlikely ally, or seeking redemption through a meaningful act.`,
+    REST:         `The player has collapsed from exhaustion after: "${prevChoice}". This is a quiet recovery scene. They are resting somewhere — a barn, an inn, the open road, a stranger's hearth. The scene should be reflective and low-stakes. Choices reflect what the player notices, thinks about, or whom they meet quietly. ALL choices should have exhaustionChange of -10 to -25. NO physical danger.`,
   }[sceneType] || 'Continue the story.';
 
   try {
@@ -2130,77 +2332,128 @@ async function generateAdventureScene(sceneType, prevChoice) {
       ? `Available resources here: ${envHere.map(e => e.name).join(', ')}`
       : 'No known resources here yet — you may surface 1–2 if it fits the scene.';
 
-    const raw = await callApi(
-      `You are a narrator for "${W.worldName}" (${W.genre}).
+    // Pressure-meter context — gives the LLM the data it needs to scale tension
+    const exhaustionPct = Math.round(100 * inv.exhaustion / inv.maxExhaustion);
+    const suspicionPct  = Math.round(100 * inv.suspicion / inv.maxSuspicion);
+    const exhaustionLabel =
+      exhaustionPct >= 85 ? 'CRITICAL — about to collapse'
+      : exhaustionPct >= 65 ? 'high — physical actions feel costly'
+      : exhaustionPct >= 35 ? 'moderate'
+      : 'fresh';
+    const suspicionLabel =
+      suspicionPct >= 75 ? 'WANTED — strangers may report or detain'
+      : suspicionPct >= 50 ? 'high — guards take notice'
+      : suspicionPct >= 25 ? 'moderate — whispers follow you'
+      : 'unnoticed';
+    const statusLine = adv.playerStatus && adv.playerStatus !== 'active'
+      ? `\nPLAYER STATUS: ${adv.playerStatus.toUpperCase()} — ${describeStatusContext(adv)}`
+      : '';
 
+    // Shared context block used by both calls — single source of truth
+    const sharedCtx = `WORLD: "${W.worldName}" (${W.genre})
 WORLD LORE: ${buildWorldContext()}
 ${simState}
 
 PLAYER: ${playerCtx}
 ARCHETYPE: ${archStr}
 HEALTH: ${healthStr}    INVENTORY: ${invSummary}
+EXHAUSTION: ${inv.exhaustion}/${inv.maxExhaustion} (${exhaustionLabel})
+SUSPICION: ${inv.suspicion}/${inv.maxSuspicion} (${suspicionLabel})${statusLine}
 FACTION RELATIONS: ${standingCtx}
 STORY HISTORY: ${historyCtx || 'This is the beginning.'}
 
 LOCAL NPCS: ${npcCtx}
 ENVIRONMENT: ${envCtx}
 
-SCENE TYPE: ${sceneInstruction}
+SCENE TYPE: ${sceneInstruction}`;
+
+    // ─── CALL A: Narrative prose (short, plain text — no JSON) ──────
+    // Smaller token budget, single well-scoped job: write the scene.
+    const narrativePromise = callApi(
+      `You are a narrator for a text adventure. Based on the context below, write ONLY the scene narrative — no JSON, no lists, no meta-commentary.
+
+${sharedCtx}
 
 WRITING STYLE — CRITICAL:
-- Use clear, accessible language. Short sentences. Active voice.
-- Avoid flowery prose, obscure metaphors, and overwrought vocabulary.
-- Keep paragraphs SHORT — 2-3 sentences each, max 4.
+- Clear, accessible language. Short sentences. Active voice.
+- Avoid flowery prose, obscure metaphors, overwrought vocabulary.
+- 3-5 SHORT paragraphs separated by blank lines. 2-3 sentences each, max 4.
 - If you use a lore term for the first time, briefly anchor it ("the Iron Throne — the ruling empire of the eastern lands").
-- Make the scene READ EASILY. The player should understand what's happening without rereading.
+- Reference at least one named element from the world lore.
+- At least one NPC should be present or mentioned (use LOCAL NPCS if they fit — otherwise introduce a new named person with agency).
+- At least one environmental detail should be something the player could interact with (a crate, graffiti, an herb, a posted notice, etc).
 
-SCENE POPULATION — REQUIRED:
-- At LEAST one NPC should be present or reachable in nearly every scene — a stranger, merchant, guard, priest, wanderer, rival, informant, etc. They have names, opinions, and their own agenda.
-- If an NPC from LOCAL NPCS fits, reuse them — keep personalities consistent. Otherwise introduce a new named person.
-- At LEAST one environmental detail should be something the player could interact with: a half-open crate, an herb growing nearby, graffiti, a forgotten tool, coins in a gutter, a posted notice. Not every resource is useful — some are junk or flavor.
+Output only the narrative prose. Start writing now.`,
+      { maxTokens: 800 }
+    );
 
-CONTENT RULES:
-- Reference at least one named element from the world lore
-- The player's archetype should shape choices (a Warrior sees different options than a Scholar)
-- If the player has items that fit the situation, offer a choice that uses them
-- At least one choice should involve interacting with an NPC (talk, barter, help, deceive, challenge) when NPCs are present
-- Consider offering a "scavenge / search the area" choice when resources are present
-- Choices should have clear consequences — the hint text tells the player what to expect
+    // ─── CALL B: Structured scene data (title, NPCs, resources, choices) ──
+    // Runs in parallel with Call A. Smaller tokens since no prose.
+    const structuredPromise = callApi(
+      `You are generating the structured data for a text-adventure scene. Given the context below, return ONLY valid JSON matching the schema exactly.
 
-Return ONLY valid JSON:
+${sharedCtx}
+
+SCHEMA RULES:
+- Produce 1-3 NPCs who are present in this scene. Reuse names from LOCAL NPCS when fitting; otherwise invent. Each has a role, optional faction, 1-sentence description, 2-3 traits, and initial disposition (-100..100).
+- Produce 0-3 environmental resources. Each has a RISK level reflecting what taking it would cost:
+    "safe"     — free for the taking, no consequence
+    "watched"  — someone is nearby; taking it raises suspicion (+10..+25)
+    "guarded"  — taking it angers a faction (negative standingChange) AND raises suspicion
+    "cursed"   — looks valuable but is dangerous (negative healthChange or grants a "cursed" item)
+- Produce EXACTLY 4 choices. The player's archetype should shape options.
+- At least one choice should involve an NPC interaction when NPCs are present.
+- Consider a "search / scavenge" choice when resources are present — its outcome must reflect the resource's risk.
+- IF EXHAUSTION ≥ 65: at least one choice should be "rest" or non-physical.
+- IF EXHAUSTION ≥ 85: physically demanding choices should have higher exhaustionChange or healthChange to reflect the danger.
+- IF SUSPICION ≥ 75: at least one choice should risk capture; capture-risk choices set canCapture=true.
+- Each choice's "consequence" hint should TELEGRAPH risk in plain language (e.g., "Risky — the guards may notice", "Safe but slow"). This restores agency.
+- Each choice has a "riskLevel" field: "low", "moderate", "high", or "deadly".
+
+PLAYER STATUS RULES:
+- If player status is "captured", choices should focus on escape, persuasion, or waiting; one should attempt freedom (escapeAttempt=true).
+- If "disgraced", choices should center on rebuilding standing or fleeing.
+- If "exhausted", produce a single REST scene — choices reflect what the player notices or thinks while resting; almost no exhaustion gain.
+
+Return ONLY this JSON:
 {
-  "sceneTitle": "Short title, 3-6 words",
-  "narrative": "3-5 SHORT paragraphs separated by \\n\\n",
-  "location": "region name",
+  "sceneTitle": "…",
+  "location": "…",
   "npcsPresent": [
-    {"name":"Name","role":"role/occupation","faction":"faction name or null","description":"1 short sentence","traits":["trait1","trait2"],"initialDisposition":0}
+    {"name":"…","role":"…","faction":"… or null","description":"1 sentence","traits":["…","…"],"initialDisposition":0}
   ],
   "environmentalResources": [
-    {"name":"what it is","type":"herb|tool|currency|document|curio|food|weapon","description":"1 short sentence"}
+    {"name":"…","type":"herb|tool|currency|document|curio|food|weapon","risk":"safe|watched|guarded|cursed","description":"1 sentence"}
   ],
   "choices": [
-    {"id":"a","text":"Clear action in plain language","consequence":"What might happen","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
-    {"id":"b","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
-    {"id":"c","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null},
-    {"id":"d","text":"...","consequence":"...","affectsFaction":null,"standingChange":0,"healthChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null}
+    {"id":"a","text":"…","consequence":"…","riskLevel":"low|moderate|high|deadly","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
+    {"id":"b","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
+    {"id":"c","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
+    {"id":"d","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false}
   ],
-  "worldPulse": "One sentence about wider world (optional)"
+  "worldPulse": "One sentence about wider world, or null"
 }
 
 FIELD NOTES:
-- npcsPresent: 1-3 entries. Reuse names from LOCAL NPCS when that NPC is still in the scene.
-- environmentalResources: 0-3 entries. If nothing makes sense, use [].
-- itemGained: null OR {"name":"specific name","description":"1-2 sentences","history":"1-2 sentences about its origin","usefulFor":"1 sentence on situations where it helps"}
-- itemLost: null OR the name of an item already in inventory
-- insightGained: null OR "a short piece of world knowledge"
-- healthChange: integer from -30 to +20, or 0
-- npcInteraction: null OR exact name of an NPC in npcsPresent — marks the choice as targeting that NPC
-- npcDispositionChange: integer from -40 to +40 to shift how that NPC feels about the player (only matters with npcInteraction)
-- scavengeTarget: null OR exact name of a resource in environmentalResources — picking this choice takes that resource into inventory`,
-      { maxTokens: 1800 }
+- itemGained: null OR {"name":"…","description":"1-2 sentences","history":"1-2 sentences","usefulFor":"1 sentence","cursed":false}
+- itemLost: null OR name of an item already in inventory
+- healthChange: -30..+20 (rare; usually 0). Use 0 unless the choice is clearly violent or healing.
+- exhaustionChange: -20..+30. Physical/stressful choices add 5-20; rest subtracts. Most choices: 0..+5.
+- suspicionChange: -10..+30. Shady/illegal choices add 10-25; lying low subtracts.
+- canCapture: true only if SUSPICION is high AND choice is risky around guards/factions
+- escapeAttempt: true for captured-state choices that try to break free
+- npcInteraction: null OR exact name from npcsPresent
+- npcDispositionChange: integer from -40 to +40 (only with npcInteraction)
+- scavengeTarget: null OR exact name from environmentalResources`,
+      { maxTokens: 1300 }
     );
 
-    const scene = parseJsonResponse(raw);
+    // Wait for both in parallel — wall time is max(A, B) not A+B
+    const [narrativeRaw, structuredRaw] = await Promise.all([narrativePromise, structuredPromise]);
+
+    const scene = parseJsonResponse(structuredRaw);
+    // Attach the narrative back into the scene object so downstream code stays the same
+    scene.narrative = (narrativeRaw || '').trim();
 
     // Update location
     if (scene.location) adv.currentRegion = scene.location;
@@ -2211,7 +2464,7 @@ FIELD NOTES:
     if (Array.isArray(scene.npcsPresent)) {
       scene.npcsPresent.forEach(n => {
         if (!n || !n.name) return;
-        const key = n.name.toLowerCase().trim();
+        const key = findOrCreateNpcKey(adv.npcs, n.name);
         const existing = adv.npcs[key];
         if (existing) {
           // Update what we know — but keep disposition we've built up
@@ -2221,6 +2474,11 @@ FIELD NOTES:
           existing.traits      = Array.isArray(n.traits) ? n.traits : existing.traits;
           existing.region      = currentLoc;
           existing.lastSeenChapter = adv.chapter;
+          // Track alternate spellings we've seen so the roster prompt can include them
+          if (!existing.aliases) existing.aliases = [];
+          if (n.name !== existing.name && !existing.aliases.includes(n.name)) {
+            existing.aliases.push(n.name);
+          }
         } else {
           adv.npcs[key] = {
             id:               key,
@@ -2237,10 +2495,15 @@ FIELD NOTES:
             lastSeenChapter:  adv.chapter,
             alive:            true,
             relationshipNote: '',
+            aliases:          [],
           };
         }
       });
     }
+
+    // Prune stale NPCs — drops anyone not seen in the last 12 chapters
+    // who isn't an ally or enemy (|disposition| >= 50). Keeps the prompt lean.
+    pruneStaleNpcs(adv, 12);
 
     // Merge environmental resources at this location
     if (Array.isArray(scene.environmentalResources)) {
@@ -2249,9 +2512,12 @@ FIELD NOTES:
       scene.environmentalResources.forEach(r => {
         if (!r || !r.name) return;
         if (existingNames.has(r.name.toLowerCase())) return;
+        const validRisks = ['safe', 'watched', 'guarded', 'cursed'];
+        const risk = validRisks.includes(r.risk) ? r.risk : 'safe';
         adv.environment[currentLoc].push({
           name:           String(r.name),
           type:           String(r.type || 'curio'),
+          risk,
           description:    String(r.description || ''),
           takenInChapter: null,
         });
@@ -2268,17 +2534,38 @@ FIELD NOTES:
     $('advNarrative').innerHTML = narHtml || '<div class="adv-empty">The Oracle is silent.</div>';
     $('advSceneLabel').textContent = scene.sceneTitle || adv.currentRegion || W.worldName;
 
-    // Render choices — add NPC and scavenge visual flags
+    // Render choices — add NPC, scavenge, and risk visual flags
+    const riskGlyph = { low:'·', moderate:'!', high:'!!', deadly:'☠' };
+    const riskLabel = { low:'Low risk', moderate:'Moderate risk', high:'High risk', deadly:'Deadly' };
+
     $('advChoices').innerHTML = (scene.choices || []).map(c => {
       const hasEffect = c.affectsFaction && c.standingChange !== 0;
       const sign      = c.standingChange > 0 ? '+' : '';
       const effectTip = hasEffect ? ` · ${c.affectsFaction} ${sign}${c.standingChange}` : '';
       const npcTag    = c.npcInteraction ? `<span class="adv-choice-tag adv-choice-tag-npc">👤 ${esc(c.npcInteraction)}</span>` : '';
-      const scavTag   = c.scavengeTarget ? `<span class="adv-choice-tag adv-choice-tag-scav">◈ take</span>` : '';
+
+      // Scavenge tag carries the resource's risk so the player can see what they're getting into
+      let scavTag = '';
+      if (c.scavengeTarget) {
+        const loc = adv.currentRegion || 'unknown';
+        const target = (adv.environment?.[loc] || []).find(r =>
+          r.name.toLowerCase() === String(c.scavengeTarget).toLowerCase() && r.takenInChapter == null
+        );
+        const rk = target?.risk || 'safe';
+        scavTag = `<span class="adv-choice-tag adv-choice-tag-scav adv-scav-${rk}">◈ take · ${rk}</span>`;
+      }
+
+      const captureTag = c.canCapture ? `<span class="adv-choice-tag adv-choice-tag-capture">⚠ capture risk</span>` : '';
+      const escapeTag  = c.escapeAttempt ? `<span class="adv-choice-tag adv-choice-tag-escape">⛓ escape</span>` : '';
+
+      // Risk telegraph — shows on every choice so the player can read the danger
+      const rl = c.riskLevel || 'low';
+      const riskTag = `<span class="adv-choice-risk adv-choice-risk-${rl}" title="${riskLabel[rl] || 'Low risk'}">${riskGlyph[rl] || '·'}</span>`;
+
       return `
-        <button class="adv-choice-btn" data-choice-id="${esc(c.id)}">
-          <span class="adv-choice-text">→ ${esc(c.text)}</span>
-          <span class="adv-choice-meta">${npcTag}${scavTag}</span>
+        <button class="adv-choice-btn adv-choice-risk-${rl}" data-choice-id="${esc(c.id)}">
+          <span class="adv-choice-text">${riskTag} ${esc(c.text)}</span>
+          <span class="adv-choice-meta">${npcTag}${scavTag}${captureTag}${escapeTag}</span>
           ${c.consequence ? `<span class="adv-choice-hint">${esc(c.consequence)}${effectTip}</span>` : ''}
         </button>`;
     }).join('');
@@ -2354,9 +2641,23 @@ async function makeAdventureChoice(choiceId) {
     toastLines.push(`☽ Insight: ${choice.insightGained.slice(0, 40)}${choice.insightGained.length > 40 ? '…' : ''}`);
   }
 
+  // Apply exhaustion change (physical/mental wear)
+  if (typeof choice.exhaustionChange === 'number' && choice.exhaustionChange !== 0) {
+    inv.exhaustion = Math.max(0, Math.min(inv.maxExhaustion, inv.exhaustion + choice.exhaustionChange));
+    if (choice.exhaustionChange > 0) toastLines.push(`+${choice.exhaustionChange} Exhaustion`);
+    else                              toastLines.push(`${choice.exhaustionChange} Exhaustion`);
+  }
+
+  // Apply suspicion change (how watched/wanted you are)
+  if (typeof choice.suspicionChange === 'number' && choice.suspicionChange !== 0) {
+    inv.suspicion = Math.max(0, Math.min(inv.maxSuspicion, inv.suspicion + choice.suspicionChange));
+    if (choice.suspicionChange > 0) toastLines.push(`+${choice.suspicionChange} Suspicion`);
+    else                             toastLines.push(`${choice.suspicionChange} Suspicion`);
+  }
+
   // NPC disposition shift
   if (choice.npcInteraction && typeof choice.npcDispositionChange === 'number' && choice.npcDispositionChange !== 0) {
-    const key = String(choice.npcInteraction).toLowerCase().trim();
+    const key = findOrCreateNpcKey(adv.npcs, choice.npcInteraction);
     const npc = adv.npcs[key];
     if (npc) {
       npc.disposition = Math.max(-100, Math.min(100, (npc.disposition || 0) + choice.npcDispositionChange));
@@ -2369,7 +2670,8 @@ async function makeAdventureChoice(choiceId) {
     }
   }
 
-  // Scavenge — take a listed environmental resource and convert to inventory item
+  // Scavenge — take a listed environmental resource and convert to inventory item.
+  // Risk level drives consequences beyond just acquiring the item.
   if (choice.scavengeTarget && typeof choice.scavengeTarget === 'string') {
     const loc = adv.currentRegion || 'unknown';
     const resources = adv.environment[loc] || [];
@@ -2378,15 +2680,37 @@ async function makeAdventureChoice(choiceId) {
     );
     if (target) {
       target.takenInChapter = adv.chapter - 1;
+      const cursed = target.risk === 'cursed';
       inv.items.push({
         name:            target.name,
         description:     target.description || `A ${target.type} found in ${loc}.`,
-        history:         `Scavenged from ${loc} during chapter ${adv.chapter - 1}.`,
-        usefulFor:       typeReuseHint(target.type),
+        history:         `Scavenged from ${loc} during chapter ${adv.chapter - 1}${cursed ? ' — its origin is troubling.' : '.'}`,
+        usefulFor:       cursed
+                          ? 'Useful, perhaps — but it carries something that gnaws at you.'
+                          : typeReuseHint(target.type),
         obtainedChapter: adv.chapter - 1,
         isStarter:       false,
+        cursed,
       });
       toastLines.push(`◈ Scavenged: ${target.name}`);
+
+      // Risk-based consequences (these stack with explicit choice deltas above)
+      const riskApply = {
+        safe:    () => {},
+        watched: () => {
+          inv.suspicion = Math.max(0, Math.min(inv.maxSuspicion, inv.suspicion + 15));
+          toastLines.push('👁 +15 Suspicion (you were noticed)');
+        },
+        guarded: () => {
+          inv.suspicion = Math.max(0, Math.min(inv.maxSuspicion, inv.suspicion + 25));
+          toastLines.push('👁 +25 Suspicion (taken from a guarded place)');
+        },
+        cursed: () => {
+          inv.health = Math.max(0, Math.min(inv.maxHealth, inv.health - 10));
+          toastLines.push('☠ -10 Health (the curse touches you)');
+        },
+      };
+      (riskApply[target.risk] || riskApply.safe)();
     }
   }
 
@@ -2417,6 +2741,8 @@ async function makeAdventureChoice(choiceId) {
   renderAdventureInventory();
   renderAdventureNpcs();
   renderAdventureEnvironment();
+  renderAdventurePressure();
+  renderAdventureStatusBanner();
   saveCurrentWorld();
 
   // Show choice was selected, brief moment before next scene
@@ -2425,15 +2751,136 @@ async function makeAdventureChoice(choiceId) {
     if (btn.dataset.choiceId === choiceId) btn.classList.add('selected');
   });
 
-  // Check for death condition before generating next scene
-  if (inv.health <= 0) {
+  // ── FAILURE-STATE TRANSITIONS — checked in priority order ──
+  // 1. Death (health 0) — irrecoverable, triggers legacy modal
+  // 2. Capture (suspicion ≥ maxSuspicion OR explicit canCapture roll)
+  // 3. Disgrace (any major faction standing ≤ -75)
+  // 4. Exhaustion (exhaustion ≥ maxExhaustion)
+  // Only the first triggered transition fires per choice.
+
+  const triggeredFailure = checkFailureStates(choice);
+  if (triggeredFailure) {
     await new Promise(r => setTimeout(r, 800));
-    handlePlayerDeath();
-    return;
+    if (triggeredFailure === 'dead')      { handlePlayerDeath(); return; }
+    if (triggeredFailure === 'captured')  { await enterCapturedState(choice); return; }
+    if (triggeredFailure === 'disgraced') { await enterDisgracedState(choice); return; }
+    if (triggeredFailure === 'exhausted') { await enterExhaustedState(choice); return; }
+  }
+
+  // ── Status-aware scene type for next scene ──
+  let nextSceneType = 'CONTINUATION';
+  if (adv.playerStatus === 'captured')  nextSceneType = 'CAPTURED';
+  if (adv.playerStatus === 'disgraced') nextSceneType = 'DISGRACED';
+  if (adv.playerStatus === 'exhausted') nextSceneType = 'REST';
+
+  // Check for escape resolution (player was captured, attempted escape, succeeded?)
+  if (adv.playerStatus === 'captured' && choice.escapeAttempt) {
+    // Escape succeeds if exhaustion is low enough — high exhaustion = can't pull it off
+    const escapeChance = inv.exhaustion < 50 ? 0.7 : inv.exhaustion < 75 ? 0.4 : 0.15;
+    if (Math.random() < escapeChance) {
+      adv.playerStatus = 'active';
+      adv.statusContext = null;
+      inv.suspicion = Math.max(40, inv.suspicion - 20); // freedom but still hunted
+      showToast('⛓ You broke free.');
+      nextSceneType = 'CONTINUATION';
+    } else {
+      // Failed escape — exhaustion penalty
+      inv.exhaustion = Math.min(inv.maxExhaustion, inv.exhaustion + 20);
+      showToast('⛓ Escape failed. You collapse, exhausted.');
+    }
   }
 
   await new Promise(r => setTimeout(r, 600));
-  await generateAdventureScene('CONTINUATION', choice.text);
+  await generateAdventureScene(nextSceneType, choice.text);
+}
+
+/**
+ * Determine if any failure state should trigger from this choice.
+ * Returns null if play continues, or a status string to enter.
+ */
+function checkFailureStates(choice) {
+  const adv = AppState.adventure;
+  const inv = AppState.adventureInventory;
+
+  // Death is final and overrides everything else
+  if (inv.health <= 0) return 'dead';
+
+  // Don't re-enter a failure state we're already in
+  if (adv.playerStatus !== 'active') return null;
+
+  // Capture — suspicion overflow OR an explicit canCapture choice when suspicion is already high
+  if (inv.suspicion >= inv.maxSuspicion) return 'captured';
+  if (choice.canCapture && inv.suspicion >= 60 && Math.random() < 0.55) return 'captured';
+
+  // Disgrace — any active faction has crashed below -75
+  for (const [name, val] of Object.entries(adv.factionStanding || {})) {
+    if (val <= -75) return 'disgraced';
+  }
+
+  // Exhaustion — only if no other failure took precedence
+  if (inv.exhaustion >= inv.maxExhaustion) return 'exhausted';
+
+  return null;
+}
+
+/** Move into captured state — limit choices, queue an escape-themed scene next. */
+async function enterCapturedState(choice) {
+  const adv = AppState.adventure;
+  // Pick a captor — preference order: faction the choice angered, lowest-standing faction, or "unknown"
+  let captor = choice.affectsFaction || null;
+  if (!captor) {
+    let worst = null, worstVal = 0;
+    for (const [name, val] of Object.entries(adv.factionStanding || {})) {
+      if (val < worstVal) { worst = name; worstVal = val; }
+    }
+    captor = worst || 'unknown captors';
+  }
+  adv.playerStatus = 'captured';
+  adv.statusContext = {
+    capturedBy:    captor,
+    capturedReason: choice.text,
+    sinceChapter:  adv.chapter,
+  };
+  showToast(`⛓ You've been captured by ${captor}.`);
+  renderAdventureStatusBanner();
+  await generateAdventureScene('CAPTURED', choice.text);
+}
+
+/** Move into disgraced state — at least one faction has turned hostile. */
+async function enterDisgracedState(choice) {
+  const adv = AppState.adventure;
+  const disgracedWith = Object.entries(adv.factionStanding || {})
+    .filter(([_, v]) => v <= -75)
+    .map(([n]) => n);
+  adv.playerStatus  = 'disgraced';
+  adv.statusContext = {
+    disgracedWith,
+    cause:         choice.text,
+    sinceChapter:  adv.chapter,
+  };
+  showToast(`✕ Disgraced — ${disgracedWith.join(', ')} want you punished.`);
+  renderAdventureStatusBanner();
+  await generateAdventureScene('DISGRACED', choice.text);
+}
+
+/** Move into exhausted state — forced rest scene next. */
+async function enterExhaustedState(choice) {
+  const adv = AppState.adventure;
+  const inv = AppState.adventureInventory;
+  adv.playerStatus  = 'exhausted';
+  adv.statusContext = { sinceChapter: adv.chapter };
+  showToast('☽ You collapse from exhaustion.');
+  renderAdventureStatusBanner();
+  // Forced rest scene; restoration applied when player makes any choice in REST
+  await generateAdventureScene('REST', choice.text);
+  // After rest scene generates, apply restoration immediately — REST scenes restore most exhaustion
+  inv.exhaustion = Math.max(0, Math.floor(inv.exhaustion * 0.3));
+  if (adv.playerStatus === 'exhausted') {
+    adv.playerStatus  = 'active';
+    adv.statusContext = null;
+    renderAdventureStatusBanner();
+    renderAdventurePressure();
+  }
 }
 
 /**
@@ -2556,16 +3003,19 @@ function startLegacyAdventure() {
     factionStanding: inheritedStandings,
     currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
+    playerStatus: 'active', statusContext: null,
     legacyChain: preservedLegacy,
     // Legacy-specific fields — flagged so beginAdventure can reference them
     _inheritedFrom: predecessor.name,
     _inheritedItem: inheritedItem,
   };
   AppState.adventureInventory = {
-    items:       inheritedItem ? [{ ...inheritedItem, obtainedChapter: 0, isStarter: true }] : [],
-    health:      100,
-    maxHealth:   100,
-    keyInsights: [],
+    items:        inheritedItem ? [{ ...inheritedItem, obtainedChapter: 0, isStarter: true }] : [],
+    health:       100,
+    maxHealth:    100,
+    exhaustion:   0, maxExhaustion: 100,
+    suspicion:    0, maxSuspicion: 100,
+    keyInsights:  [],
     achievements: [],
   };
 
@@ -3222,6 +3672,8 @@ function bindEvents() {
             renderAdventureCharacterCard();
             renderFactionStandings();
             renderAdventureHealth();
+            renderAdventurePressure();
+            renderAdventureStatusBanner();
             renderAdventureInventory();
             renderAdventureNpcs();
             renderAdventureEnvironment();

@@ -2265,7 +2265,7 @@ function renderFactionStandings() {
  * sceneType: 'OPENING' | 'CONTINUATION' | 'CONSEQUENCE'
  * prevChoice: the choice text that led to this scene (null for opening)
  */
-async function generateAdventureScene(sceneType, prevChoice) {
+async function generateAdventureScene(sceneType, prevChoice, retryAttempt = 0) {
   const W   = AppState.world;
   const adv = AppState.adventure;
 
@@ -2445,7 +2445,7 @@ FIELD NOTES:
 - npcInteraction: null OR exact name from npcsPresent
 - npcDispositionChange: integer from -40 to +40 (only with npcInteraction)
 - scavengeTarget: null OR exact name from environmentalResources`,
-      { maxTokens: 1300 }
+      { maxTokens: 1800 }
     );
 
     // Wait for both in parallel — wall time is max(A, B) not A+B
@@ -2454,6 +2454,12 @@ FIELD NOTES:
     const scene = parseJsonResponse(structuredRaw);
     // Attach the narrative back into the scene object so downstream code stays the same
     scene.narrative = (narrativeRaw || '').trim();
+
+    // Sanity-check the parsed scene — a scene with no choices is unplayable
+    // and triggers the silent retry rather than leaving the user stuck.
+    if (!Array.isArray(scene.choices) || scene.choices.length === 0) {
+      throw new Error('Scene returned no choices');
+    }
 
     // Update location
     if (scene.location) adv.currentRegion = scene.location;
@@ -2588,7 +2594,15 @@ FIELD NOTES:
     updatePanelAdventure();
 
   } catch (err) {
-    $('advNarrative').innerHTML = `<div class="adv-empty">The Oracle's vision clouds — ${esc(err.message)}<br><br><button class="btn-sm" onclick="generateAdventureScene('${sceneType}',null)">↺ Try again</button></div>`;
+    // Silently retry once on parse failures or empty/incomplete responses —
+    // these usually self-resolve on a fresh roll because the LLM is non-deterministic.
+    if (retryAttempt < 1 && /parse|JSON|empty|no choices/i.test(err.message)) {
+      diagLog('warn', `Scene parse failed, retrying silently: ${err.message}`);
+      await new Promise(r => setTimeout(r, 400));
+      return generateAdventureScene(sceneType, prevChoice, retryAttempt + 1);
+    }
+    // After silent retry, show a friendly error with manual retry button
+    $('advNarrative').innerHTML = `<div class="adv-empty">The Oracle's vision clouds for a moment.<br><br><button class="btn-sm" onclick="generateAdventureScene('${sceneType}',null)">↺ Try Again</button></div>`;
     recordDiagError('adventure', err.message);
   }
 }

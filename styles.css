@@ -1702,11 +1702,12 @@ body{
 .adv-attribute-display {
   margin-top: 1.25rem;
   padding: 1rem;
-  background: rgba(0, 0, 0, .2);
-  border: 1px solid var(--bord-f);
+  background: #faf3e0;
+  border: 1px solid rgba(166, 124, 47, 0.18);
   border-radius: var(--rlg);
   text-align: center;
   animation: fadeIn .3s ease;
+  box-shadow: var(--shadow-card);
 }
 
 .adv-attribute-title {

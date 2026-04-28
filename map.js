@@ -404,25 +404,64 @@ function drawBorder(svg, w, h) {
   const s  = PARCHMENT.ink;
   const sw = 0.8;
 
-  // Outer frame
-  svg.appendChild(mk('rect', { x:4, y:4, width:w-8, height:h-8, fill:'none', stroke:s, 'stroke-width':1.5 }));
-  // Inner frame
-  svg.appendChild(mk('rect', { x:10, y:10, width:w-20, height:h-20, fill:'none', stroke:s, 'stroke-width':sw, 'stroke-dasharray':'4 3' }));
-
-  // Corner ornaments
-  const corners = [[14,14],[w-14,14],[14,h-14],[w-14,h-14]];
-  corners.forEach(([cx, cy]) => {
-    svg.appendChild(mk('circle', { cx, cy, r:4, fill:'none', stroke:s, 'stroke-width':sw }));
-    svg.appendChild(mk('circle', { cx, cy, r:1.5, fill:s }));
-    // Cross marks
-    svg.appendChild(mk('line', { x1:cx-8, y1:cy, x2:cx+8, y2:cy, stroke:s, 'stroke-width':sw*0.6 }));
-    svg.appendChild(mk('line', { x1:cx, y1:cy-8, x2:cx, y2:cy+8, stroke:s, 'stroke-width':sw*0.6 }));
+  // Aged corner stains — darker tea-stain blooms in each corner for paper-aged feel
+  const stainPositions = [[0,0],[w,0],[0,h],[w,h]];
+  stainPositions.forEach(([sx, sy]) => {
+    // Outer faded stain
+    svg.appendChild(mk('circle', {
+      cx: sx, cy: sy, r: 90,
+      fill: PARCHMENT.paperDark,
+      'fill-opacity': 0.18,
+    }));
+    // Inner darker stain
+    svg.appendChild(mk('circle', {
+      cx: sx, cy: sy, r: 50,
+      fill: PARCHMENT.paperDark,
+      'fill-opacity': 0.22,
+    }));
   });
 
-  // Mid-edge ornaments
+  // Edge wear — irregular tea-stain blooms along edges
+  const edgeRand = seededRand(54321);
+  for (let i = 0; i < 14; i++) {
+    const onSide = Math.floor(edgeRand() * 4);
+    let ex, ey;
+    if (onSide === 0)      { ex = 30 + edgeRand() * (w - 60); ey = edgeRand() * 30; }
+    else if (onSide === 1) { ex = w - edgeRand() * 30;        ey = 30 + edgeRand() * (h - 60); }
+    else if (onSide === 2) { ex = 30 + edgeRand() * (w - 60); ey = h - edgeRand() * 30; }
+    else                   { ex = edgeRand() * 30;            ey = 30 + edgeRand() * (h - 60); }
+    svg.appendChild(mk('circle', {
+      cx: ex, cy: ey, r: 8 + edgeRand() * 16,
+      fill: PARCHMENT.paperDark,
+      'fill-opacity': 0.08 + edgeRand() * 0.1,
+    }));
+  }
+
+  // Outer frame — slightly thicker and more inked
+  svg.appendChild(mk('rect', { x:4, y:4, width:w-8, height:h-8, fill:'none', stroke:s, 'stroke-width':1.8 }));
+  // Inner frame — dashed
+  svg.appendChild(mk('rect', { x:10, y:10, width:w-20, height:h-20, fill:'none', stroke:s, 'stroke-width':sw, 'stroke-dasharray':'4 3' }));
+
+  // Corner ornaments — fleur-de-lis style
+  const corners = [[14,14],[w-14,14],[14,h-14],[w-14,h-14]];
+  corners.forEach(([cx, cy]) => {
+    // Outer ring
+    svg.appendChild(mk('circle', { cx, cy, r:6, fill:'none', stroke:s, 'stroke-width':sw }));
+    svg.appendChild(mk('circle', { cx, cy, r:4, fill:'none', stroke:s, 'stroke-width':sw*0.6 }));
+    svg.appendChild(mk('circle', { cx, cy, r:1.5, fill:s }));
+    // Cross marks reaching outward
+    svg.appendChild(mk('line', { x1:cx-10, y1:cy, x2:cx+10, y2:cy, stroke:s, 'stroke-width':sw*0.6 }));
+    svg.appendChild(mk('line', { x1:cx, y1:cy-10, x2:cx, y2:cy+10, stroke:s, 'stroke-width':sw*0.6 }));
+    // Diagonal flourishes
+    svg.appendChild(mk('line', { x1:cx-7, y1:cy-7, x2:cx+7, y2:cy+7, stroke:s, 'stroke-width':sw*0.4 }));
+    svg.appendChild(mk('line', { x1:cx-7, y1:cy+7, x2:cx+7, y2:cy-7, stroke:s, 'stroke-width':sw*0.4 }));
+  });
+
+  // Mid-edge ornaments — diamond with center dot
   const mids = [[w/2,8],[w/2,h-8],[8,h/2],[w-8,h/2]];
   mids.forEach(([cx, cy]) => {
     svg.appendChild(mk('path', { d:`M ${cx-6} ${cy} L ${cx} ${cy-5} L ${cx+6} ${cy} L ${cx} ${cy+5} Z`, fill:'none', stroke:s, 'stroke-width':sw*0.7 }));
+    svg.appendChild(mk('circle', { cx, cy, r:1, fill:s }));
   });
 }
 
@@ -599,24 +638,58 @@ function drawTitleScroll(svg, worldName, genre, cx, y) {
   const g = mk('g');
   const s = PARCHMENT.ink;
 
-  // Scroll ribbon
-  const w = Math.min(300, worldName.length * 12 + 60);
-  g.appendChild(mk('path', {
-    d: `M ${cx-w/2} ${y-2} Q ${cx-w/2-8} ${y+9} ${cx-w/2} ${y+20} L ${cx+w/2} ${y+20} Q ${cx+w/2+8} ${y+9} ${cx+w/2} ${y-2} Z`,
-    fill: PARCHMENT.paperDark, stroke: s, 'stroke-width': 0.9, 'fill-opacity': 0.92,
-  }));
-  // Scroll curl tabs
-  g.appendChild(mk('path', { d:`M ${cx-w/2-8} ${y+9} Q ${cx-w/2-14} ${y+5} ${cx-w/2-8} ${y+1}`, fill:'none', stroke:s, 'stroke-width':0.7 }));
-  g.appendChild(mk('path', { d:`M ${cx+w/2+8} ${y+9} Q ${cx+w/2+14} ${y+5} ${cx+w/2+8} ${y+1}`, fill:'none', stroke:s, 'stroke-width':0.7 }));
+  // Cartouche — ornate framed title block like vintage maps use
+  const w = Math.min(340, worldName.length * 12 + 90);
+  const h = 36;
 
+  // Drop shadow band
+  g.appendChild(mk('rect', {
+    x: cx-w/2 + 2, y: y-2 + 2, width: w, height: h,
+    rx: 3, fill: PARCHMENT.ink, 'fill-opacity': 0.12,
+  }));
+
+  // Main cartouche body
+  g.appendChild(mk('path', {
+    d: `M ${cx-w/2+8} ${y-2}
+        L ${cx+w/2-8} ${y-2}
+        Q ${cx+w/2} ${y-2} ${cx+w/2} ${y+6}
+        L ${cx+w/2} ${y+h-8}
+        Q ${cx+w/2} ${y+h-2} ${cx+w/2-8} ${y+h-2}
+        L ${cx-w/2+8} ${y+h-2}
+        Q ${cx-w/2} ${y+h-2} ${cx-w/2} ${y+h-8}
+        L ${cx-w/2} ${y+6}
+        Q ${cx-w/2} ${y-2} ${cx-w/2+8} ${y-2} Z`,
+    fill: PARCHMENT.paperLight, stroke: s, 'stroke-width': 1.2, 'fill-opacity': 0.95,
+  }));
+
+  // Inner decorative line
+  g.appendChild(mk('rect', {
+    x: cx-w/2+5, y: y+1, width: w-10, height: h-6,
+    fill: 'none', stroke: s, 'stroke-width': 0.4, 'stroke-dasharray': '2 2', 'stroke-opacity': 0.5,
+  }));
+
+  // Decorative end-caps — small flourishes on either side
+  const capY = y + h/2 - 1;
+  [-1, 1].forEach(dir => {
+    const ex = cx + dir * (w/2 + 4);
+    g.appendChild(mk('circle', { cx: ex, cy: capY, r: 4, fill:'none', stroke:s, 'stroke-width':0.8 }));
+    g.appendChild(mk('circle', { cx: ex, cy: capY, r: 1.5, fill: s }));
+    g.appendChild(mk('line', { x1: ex+dir*4, y1: capY, x2: ex+dir*10, y2: capY, stroke: s, 'stroke-width': 0.6 }));
+  });
+
+  // Title text
   g.appendChild(mk('text', {
-    x:cx, y:y+12, 'text-anchor':'middle', 'font-family':'Cinzel,serif',
-    'font-size':12, fill:s, 'font-weight':'700', 'letter-spacing':'2',
+    x: cx, y: y+15, 'text-anchor':'middle', 'font-family':'Cinzel,serif',
+    'font-size':13, fill:s, 'font-weight':'700', 'letter-spacing':'3',
   }, worldName.toUpperCase()));
-  g.appendChild(mk('text', {
-    x:cx, y:y+21, 'text-anchor':'middle', 'font-family':'Crimson Pro,serif',
-    'font-size':7, fill:PARCHMENT.inkFaint, 'font-style':'italic',
-  }, genre));
+
+  // Subtitle (genre)
+  if (genre) {
+    g.appendChild(mk('text', {
+      x: cx, y: y+27, 'text-anchor':'middle', 'font-family':'Crimson Pro,serif',
+      'font-size':8, fill: PARCHMENT.inkFaint, 'font-style':'italic', 'letter-spacing':'1.5',
+    }, `· ${genre} ·`));
+  }
 
   svg.appendChild(g);
 }
@@ -624,7 +697,7 @@ function drawTitleScroll(svg, worldName, genre, cx, y) {
 // ─── SEA WAVES & ATMOSPHERE ───────────────────────────────────
 function drawSeaAtmosphere(svg, w, h, regions) {
   // Scattered wave marks across the sea areas
-  const waveCount = 28;
+  const waveCount = 32;
   const rand = seededRand(12345);
   for (let i = 0; i < waveCount; i++) {
     const wx = 30 + rand() * (w - 60);
@@ -637,30 +710,111 @@ function drawSeaAtmosphere(svg, w, h, regions) {
     if (tooClose) continue;
 
     const ww = 10 + rand() * 12;
+    // Two-curve waves for richer look
     svg.appendChild(mk('path', {
-      d: `M ${wx} ${wy} Q ${wx + ww/2} ${wy - 3} ${wx + ww} ${wy}`,
-      fill: 'none', stroke: PARCHMENT.seaDark, 'stroke-width': 0.5, 'stroke-opacity': 0.4,
+      d: `M ${wx} ${wy} Q ${wx + ww/3} ${wy - 3} ${wx + 2*ww/3} ${wy} T ${wx + ww*1.4} ${wy}`,
+      fill: 'none', stroke: PARCHMENT.seaDark, 'stroke-width': 0.55, 'stroke-opacity': 0.45,
     }));
   }
 
-  // Sea creature hint (decorative)
+  // Sea creature — vintage map serpent in open water
   const cr = seededRand(99999);
-  const creatureX = 30 + cr() * (w - 100);
-  const creatureY = 30 + cr() * (h - 60);
-  const tooClose = regions.some(r => Math.hypot(creatureX - r.x, creatureY - r.y) < 80);
-  if (!tooClose) {
+  const creatureX = 50 + cr() * (w - 200);
+  const creatureY = 80 + cr() * (h - 200);
+  const creatureFar = regions.every(r => Math.hypot(creatureX - r.x, creatureY - r.y) > 100);
+  if (creatureFar) {
     drawSeaCreature(svg, creatureX, creatureY);
+  }
+
+  // Sailing ship — placed in the largest open-water gap
+  const shipRand = seededRand(44444);
+  // Try several spots, pick one that's far from all regions and the creature
+  let bestShip = null, bestDist = 0;
+  for (let i = 0; i < 12; i++) {
+    const sx = 60 + shipRand() * (w - 200);
+    const sy = 60 + shipRand() * (h - 200);
+    let minDist = Math.hypot(sx - creatureX, sy - creatureY);
+    regions.forEach(r => {
+      minDist = Math.min(minDist, Math.hypot(sx - r.x, sy - r.y));
+    });
+    if (minDist > bestDist) { bestDist = minDist; bestShip = [sx, sy]; }
+  }
+  if (bestShip && bestDist > 90) {
+    drawShip(svg, bestShip[0], bestShip[1]);
   }
 }
 
 function drawSeaCreature(svg, x, y) {
-  const s = PARCHMENT.seaDark;
-  // Simple sea serpent silhouette
-  svg.appendChild(mk('path', {
-    d: `M ${x} ${y} Q ${x+12} ${y-10} ${x+24} ${y} Q ${x+36} ${y+10} ${x+48} ${y} Q ${x+60} ${y-8} ${x+66} ${y-4}`,
-    fill: 'none', stroke: s, 'stroke-width': 1.2, 'stroke-opacity': 0.35,
+  const s  = PARCHMENT.seaDark;
+  const sw = 0.9;
+  const g  = mk('g');
+
+  // Serpent humps — three arches with descending size
+  g.appendChild(mk('path', {
+    d: `M ${x} ${y}
+        Q ${x+10} ${y-12} ${x+22} ${y}
+        Q ${x+34} ${y+10} ${x+46} ${y}
+        Q ${x+56} ${y-8} ${x+64} ${y-3}`,
+    fill: 'none', stroke: s, 'stroke-width': sw, 'stroke-opacity': 0.55,
   }));
-  svg.appendChild(mk('circle', { cx:x, cy:y, r:4, fill:'none', stroke:s, 'stroke-width':0.8, 'stroke-opacity':0.35 }));
+  // Head — small triangular shape
+  g.appendChild(mk('path', {
+    d: `M ${x-2} ${y+1} L ${x-9} ${y-3} L ${x-9} ${y+5} Z`,
+    fill: 'none', stroke: s, 'stroke-width': sw*0.8, 'stroke-opacity': 0.55,
+  }));
+  // Eye
+  g.appendChild(mk('circle', { cx: x-6, cy: y, r: 0.8, fill: s, 'fill-opacity': 0.55 }));
+  // Spray ripples below
+  g.appendChild(mk('path', {
+    d: `M ${x+10} ${y+8} Q ${x+14} ${y+6} ${x+18} ${y+8} M ${x+30} ${y+12} Q ${x+34} ${y+10} ${x+38} ${y+12}`,
+    fill: 'none', stroke: s, 'stroke-width': sw*0.5, 'stroke-opacity': 0.4,
+  }));
+
+  svg.appendChild(g);
+}
+
+/**
+ * Vintage sailing ship — small caravel silhouette with hull, two sails, mast.
+ * Drawn at low opacity so it sits "in" the parchment rather than on top.
+ */
+function drawShip(svg, x, y) {
+  const s  = PARCHMENT.ink;
+  const sw = 0.8;
+  const op = 0.5;
+  const g  = mk('g');
+
+  // Hull — curved bowl
+  g.appendChild(mk('path', {
+    d: `M ${x-12} ${y} Q ${x-14} ${y+6} ${x-8} ${y+8} L ${x+8} ${y+8} Q ${x+14} ${y+6} ${x+12} ${y} Z`,
+    fill: PARCHMENT.paperDark, stroke: s, 'stroke-width': sw, 'stroke-opacity': op, 'fill-opacity': 0.4,
+  }));
+  // Deck line
+  g.appendChild(mk('line', { x1: x-12, y1: y, x2: x+12, y2: y, stroke: s, 'stroke-width': sw*0.6, 'stroke-opacity': op }));
+
+  // Main mast
+  g.appendChild(mk('line', { x1: x, y1: y, x2: x, y2: y-18, stroke: s, 'stroke-width': sw, 'stroke-opacity': op }));
+  // Main sail (large, curved like wind-filled)
+  g.appendChild(mk('path', {
+    d: `M ${x} ${y-17} Q ${x+10} ${y-12} ${x+8} ${y-3} L ${x} ${y-3} Z`,
+    fill: PARCHMENT.paperLight, stroke: s, 'stroke-width': sw*0.7, 'stroke-opacity': op, 'fill-opacity': 0.6,
+  }));
+  // Foresail (smaller, opposite side)
+  g.appendChild(mk('path', {
+    d: `M ${x} ${y-13} Q ${x-8} ${y-9} ${x-7} ${y-3} L ${x} ${y-3} Z`,
+    fill: PARCHMENT.paperLight, stroke: s, 'stroke-width': sw*0.7, 'stroke-opacity': op, 'fill-opacity': 0.55,
+  }));
+  // Tiny pennant flag at masthead
+  g.appendChild(mk('path', {
+    d: `M ${x} ${y-18} L ${x+5} ${y-19} L ${x+3} ${y-16} L ${x} ${y-16}`,
+    fill: 'none', stroke: s, 'stroke-width': sw*0.6, 'stroke-opacity': op,
+  }));
+  // Wake ripples behind ship
+  g.appendChild(mk('path', {
+    d: `M ${x-14} ${y+10} Q ${x-18} ${y+12} ${x-22} ${y+10} M ${x+14} ${y+10} Q ${x+18} ${y+12} ${x+22} ${y+10}`,
+    fill: 'none', stroke: PARCHMENT.seaDark, 'stroke-width': sw*0.4, 'stroke-opacity': 0.35,
+  }));
+
+  svg.appendChild(g);
 }
 
 // ─── MAIN RENDER FUNCTION ─────────────────────────────────────
@@ -895,7 +1049,7 @@ export function renderIllustratedMap(svgId, world, novaState, onRegionClick, ove
   drawBorder(svg, vw, vh);
 
   // ── Compass rose (bottom-right area) ──────────────────────
-  drawCompassRose(svg, vw - 70, vh - 70, 42);
+  drawCompassRose(svg, vw - 78, vh - 78, 50);
 
   // ── Legend (top-right, unified) ───────────────────────────
   const settlementItems = [

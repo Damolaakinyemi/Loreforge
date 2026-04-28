@@ -220,6 +220,12 @@ export const AppState = {
     // Each archetype has the same 100 total points across 4 stats
     playerArchetype: null,  // { id, label, description, stats: {strength, intelligence, dexterity, speed} }
 
+    // ── Objectives — three lore-grounded goals generated at adventure start. ──
+    // Each: { id, title, description, completionHint, difficulty,
+    //         status: 'active'|'completed'|'failed', completedChapter|null, progress: 0..100 }
+    // Game ends when all 3 are completed (win) OR any is failed irrecoverably (lose).
+    objectives: [],
+
     factionStanding: {},
 
     currentRegion: null,
@@ -594,6 +600,7 @@ export function loadAdventureSave(idx) {
   // Backfill new fields added after this save was made
   if (!AppState.adventure.npcs)        AppState.adventure.npcs = {};
   if (!AppState.adventure.environment) AppState.adventure.environment = {};
+  if (!Array.isArray(AppState.adventure.objectives)) AppState.adventure.objectives = [];
   if (!AppState.adventure.playerStatus) AppState.adventure.playerStatus = 'active';
   if (AppState.adventure.statusContext === undefined) AppState.adventure.statusContext = null;
   if (typeof AppState.adventureInventory.exhaustion !== 'number') {

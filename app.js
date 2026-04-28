@@ -1698,7 +1698,7 @@ function resetAdventure(fullReset = false) {
     factionStanding: {}, currentRegion: null, history: [],
     currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
-    playerStatus: 'active', statusContext: null,
+    objectives: [], playerStatus: 'active', statusContext: null,
     legacyChain: preservedLegacy,
   };
   AppState.adventureInventory = {
@@ -1734,9 +1734,10 @@ async function beginAdventure() {
     adv.factionStanding[f.name] = f.name === adv.playerFaction.name ? 25 : 0;
   });
 
-  // Fresh NPC roster and environment cache for this run
+  // Fresh NPC roster, environment cache, and objectives for this run
   adv.npcs        = {};
   adv.environment = {};
+  adv.objectives  = [];
 
   // Max health gets a small bonus from strength attribute
   const strengthBonus = Math.round((adv.playerArchetype.stats.strength - 25) / 2);
@@ -1766,9 +1767,13 @@ async function beginAdventure() {
   renderAdventureInventory();
   renderAdventureNpcs();
   renderAdventureEnvironment();
+  renderObjectives();
 
   // Generate 2 starter items specific to this character before the story begins
   await generateStarterItems();
+
+  // Generate three objectives that will define this run's win condition
+  await generateObjectives();
 
   // Then open the first scene
   await generateAdventureScene('OPENING', null);
@@ -1839,6 +1844,187 @@ Return ONLY valid JSON:
     renderAdventureInventory();
     diagLog('warn', `Starter items fallback used: ${err.message}`);
   }
+}
+
+/**
+ * Generate three lore-grounded objectives for the adventure.
+ * Each has a title, description, completionHint (so the LLM can later
+ * recognize completion), and difficulty. Stored in adv.objectives.
+ */
+async function generateObjectives() {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  $('advNarrative').innerHTML = '<div class="adv-loading">The Oracle reveals what your story must become…</div>';
+
+  try {
+    const factionList = (W.factions || []).slice(0, 5).map(f => `${f.name} (${f.type || 'unknown'})`).join('; ') || 'no factions';
+    const regionList  = (W.regions  || []).slice(0, 6).map(r => `${r.name} (${r.type || 'unknown'})`).join('; ') || 'no regions';
+    const tensionList = (W.history  || []).slice(0, 3).map(h => h.event || h.name || '').filter(Boolean).join('; ') || '';
+
+    const raw = await callApi(
+      `Generate THREE objectives for an adventure in "${W.worldName}" (${W.genre}).
+
+PLAYER: ${adv.playerName || 'a traveler'} from ${adv.playerOrigin?.name || 'unknown'}, member of ${adv.playerFaction?.name || 'no faction'}.
+${adv.playerBg ? `BACKGROUND: ${adv.playerBg}` : ''}
+
+WORLD CONTEXT:
+- Factions: ${factionList}
+- Regions: ${regionList}
+${tensionList ? `- Recent history: ${tensionList}` : ''}
+
+OBJECTIVE RULES — CRITICAL:
+- All three must be GROUNDED in the world's specific lore. No generic "save the kingdom" — name actual factions, regions, conflicts, items.
+- The three should feel different in shape: one INVESTIGATIVE (find truth, recover knowledge), one RELATIONAL (deal with a person or faction), one PHYSICAL (reach a place, recover an object, survive an event).
+- Each must be COMPLETABLE in 10-25 chapters. Not too easy, not impossible.
+- Difficulty: assign "low", "moderate", or "high" honestly based on the obstacles named.
+- The completionHint MUST describe a concrete event that the system can recognize: e.g., "Player reaches the [region X]" or "Player recovers an item described as a [thing]" or "Player wins faction [Y] standing of +50 or higher".
+
+Return ONLY valid JSON:
+{
+  "objectives": [
+    {
+      "title": "Short title (4-7 words)",
+      "description": "1-2 sentences explaining the goal in plain language, grounded in this world's lore",
+      "completionHint": "Specific completable event (e.g., 'Reach the Verdant Reach' or 'Recover the Crystalline Shard' or 'Earn +50 standing with the Iron Throne')",
+      "difficulty": "low|moderate|high"
+    },
+    {"title": "...", "description": "...", "completionHint": "...", "difficulty": "..."},
+    {"title": "...", "description": "...", "completionHint": "...", "difficulty": "..."}
+  ]
+}`,
+      { maxTokens: 800 }
+    );
+
+    const data = parseJsonResponse(raw);
+    const list = Array.isArray(data.objectives) ? data.objectives.slice(0, 3) : [];
+    if (list.length < 3) throw new Error(`Only ${list.length} objectives returned`);
+
+    adv.objectives = list.map((o, i) => ({
+      id:               `obj_${i}`,
+      title:            String(o.title || `Objective ${i + 1}`),
+      description:      String(o.description || ''),
+      completionHint:   String(o.completionHint || ''),
+      difficulty:       ['low','moderate','high'].includes(o.difficulty) ? o.difficulty : 'moderate',
+      status:           'active',
+      progress:         0,
+      completedChapter: null,
+    }));
+
+    renderObjectives();
+  } catch (err) {
+    diagLog('warn', `Objective generation failed, using fallbacks: ${err.message}`);
+    // Fallback — generic but world-flavored objectives so the game still has stakes
+    const W = AppState.world;
+    const firstRegion  = W.regions?.[0]?.name  || 'an unknown land';
+    const firstFaction = W.factions?.[0]?.name || 'a hostile faction';
+    adv.objectives = [
+      { id:'obj_0', title:'Discover the Truth', description:`Uncover what's really happening in ${W.worldName}.`, completionHint:'Player gains a major insight about the world', difficulty:'moderate', status:'active', progress:0, completedChapter:null },
+      { id:'obj_1', title:'Forge an Alliance',  description:`Earn the trust of ${firstFaction} or another major power.`, completionHint:`Earn +50 standing with any faction`, difficulty:'moderate', status:'active', progress:0, completedChapter:null },
+      { id:'obj_2', title:'Reach the Heart',    description:`Travel to ${firstRegion} and survive what waits there.`, completionHint:`Player reaches ${firstRegion}`, difficulty:'high', status:'active', progress:0, completedChapter:null },
+    ];
+    renderObjectives();
+  }
+}
+
+/** Render the persistent objectives panel above the narrative. */
+function renderObjectives() {
+  const adv = AppState.adventure;
+  const container = $('advObjectives');
+  if (!container) return;
+  const objs = adv.objectives || [];
+  if (!objs.length) {
+    container.innerHTML = '';
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = '';
+
+  const completedCount = objs.filter(o => o.status === 'completed').length;
+  const failedCount    = objs.filter(o => o.status === 'failed').length;
+
+  const icon = (s) => s === 'completed' ? '✓' : s === 'failed' ? '✕' : '◇';
+  const diffSwatch = (d) => `<span class="adv-obj-diff adv-obj-diff-${d}">${d}</span>`;
+
+  container.innerHTML = `
+    <div class="adv-obj-head">
+      <span class="adv-obj-title">Objectives</span>
+      <span class="adv-obj-count">${completedCount} of ${objs.length} complete${failedCount ? ` · ${failedCount} failed` : ''}</span>
+      <button class="adv-obj-toggle" id="advObjToggle" aria-label="Collapse">−</button>
+    </div>
+    <div class="adv-obj-list" id="advObjList">
+      ${objs.map(o => `
+        <div class="adv-obj-card adv-obj-${o.status}">
+          <div class="adv-obj-row">
+            <span class="adv-obj-icon">${icon(o.status)}</span>
+            <span class="adv-obj-name">${esc(o.title)}</span>
+            ${diffSwatch(o.difficulty)}
+          </div>
+          <div class="adv-obj-desc">${esc(o.description)}</div>
+          ${o.status === 'active' && o.progress > 0 ? `<div class="adv-obj-prog"><div class="adv-obj-prog-fill" style="width:${o.progress}%"></div></div>` : ''}
+        </div>`).join('')}
+    </div>`;
+
+  $('advObjToggle')?.addEventListener('click', () => {
+    const list = $('advObjList');
+    const btn  = $('advObjToggle');
+    if (!list || !btn) return;
+    if (list.style.display === 'none') {
+      list.style.display = '';
+      btn.textContent = '−';
+    } else {
+      list.style.display = 'none';
+      btn.textContent = '+';
+    }
+  });
+}
+
+/**
+ * Apply a progress/status update to an objective. Returns true if the call
+ * resulted in win or loss (game over) so the caller can branch.
+ */
+function applyObjectiveUpdate(update) {
+  if (!update || !update.id) return false;
+  const adv = AppState.adventure;
+  const obj = (adv.objectives || []).find(o => o.id === update.id);
+  if (!obj || obj.status !== 'active') return false;
+
+  if (update.status === 'advanced' && typeof update.progress === 'number') {
+    obj.progress = Math.max(obj.progress, Math.min(100, update.progress));
+    showToast(`◇ Progress: ${obj.title}`);
+  } else if (update.status === 'completed') {
+    obj.status = 'completed';
+    obj.progress = 100;
+    obj.completedChapter = adv.chapter;
+    showToast(`✓ Objective complete: ${obj.title}`);
+  } else if (update.status === 'failed') {
+    obj.status = 'failed';
+    obj.completedChapter = adv.chapter;
+    showToast(`✕ Objective failed: ${obj.title}`);
+  }
+
+  renderObjectives();
+  return checkObjectiveEndGame();
+}
+
+/** Check if all objectives complete (win) or any failed (lose). */
+function checkObjectiveEndGame() {
+  const adv = AppState.adventure;
+  const objs = adv.objectives || [];
+  if (!objs.length) return false;
+
+  const allComplete = objs.every(o => o.status === 'completed');
+  const anyFailed   = objs.some(o => o.status === 'failed');
+
+  if (allComplete) {
+    handleAdventureVictory();
+    return true;
+  }
+  if (anyFailed) {
+    handleAdventureLoss('An objective was lost beyond recovery.');
+    return true;
+  }
+  return false;
 }
 
 /** Render the health bar */
@@ -1951,13 +2137,20 @@ function renderAdventureInventory() {
 
   let html = '';
   if (hasItems) {
-    html += `<div class="adv-inv-head">Inventory</div>`;
-    html += `<div class="adv-inv-items">${inv.items.map((item, i) => `
-      <div class="adv-inv-item" data-item-idx="${i}">
+    html += `<div class="adv-inv-head">Inventory <span class="adv-inv-count">(${inv.items.length})</span></div>`;
+    html += `<div class="adv-inv-items">${inv.items.map((item, i) => {
+      const cls = `adv-inv-item${item.used ? ' adv-inv-used' : ''}${item.cursed ? ' adv-inv-cursed' : ''}`;
+      const badge = item.used ? '<span class="adv-inv-badge adv-inv-badge-used">used</span>'
+                  : item.cursed ? '<span class="adv-inv-badge adv-inv-badge-cursed">cursed</span>'
+                  : '';
+      return `
+      <div class="${cls}" data-item-idx="${i}">
         <span class="adv-inv-icon">◆</span>
         <span class="adv-inv-name">${esc(item.name)}</span>
+        ${badge}
         <span class="adv-inv-chapter">${item.isStarter ? 'Starter' : `Ch.${item.obtainedChapter || '?'}`}</span>
-      </div>`).join('')}</div>`;
+      </div>`;
+    }).join('')}</div>`;
   }
   if (hasInsights) {
     html += `<div class="adv-inv-head">Insights</div>`;
@@ -2194,6 +2387,12 @@ function showItemDetail(item, isNewlyAcquired = false) {
 
   const body = $('itemDetailBody');
   let html = '';
+  if (item.cursed) {
+    html += `<div class="item-modal-cursed">⚠ This item carries a curse.</div>`;
+  }
+  if (item.used) {
+    html += `<div class="item-modal-used">This item has already been used.</div>`;
+  }
   if (item.description) {
     html += `<div class="item-modal-section">
       <div class="item-modal-label">Description</div>
@@ -2215,7 +2414,54 @@ function showItemDetail(item, isNewlyAcquired = false) {
   if (!html) html = '<p class="adv-empty">No details recorded for this item.</p>';
   body.innerHTML = html;
 
+  // Wire the Use button — only enabled when adventure is active and item isn't already used
+  const useBtn = $('btnItemUse');
+  if (useBtn) {
+    const adv = AppState.adventure;
+    const canUse = adv.active && !item.used && !isNewlyAcquired;
+    useBtn.style.display = canUse ? 'inline-flex' : 'none';
+    useBtn.onclick = () => useInventoryItem(item);
+  }
+
   openModal('itemDetailModal');
+}
+
+/**
+ * Use an inventory item — feeds the use into the next scene as a player action.
+ * The Oracle resolves what happens narratively.
+ *
+ * Item is marked as "used" but kept in inventory (greyed out) unless it's
+ * a consumable type (food, herb), in which case it's removed.
+ */
+async function useInventoryItem(item) {
+  const adv = AppState.adventure;
+  const inv = AppState.adventureInventory;
+  if (!adv.active || item.used) return;
+
+  closeModal('itemDetailModal');
+
+  // Mark as used; consumables get removed from inventory
+  const consumableTypes = ['food', 'herb'];
+  const isConsumable = consumableTypes.some(t =>
+    (item.usefulFor || '').toLowerCase().includes(t) ||
+    (item.description || '').toLowerCase().includes(t)
+  );
+
+  if (isConsumable) {
+    const idx = inv.items.findIndex(i => i.name === item.name);
+    if (idx >= 0) inv.items.splice(idx, 1);
+    showToast(`◆ Consumed: ${item.name}`);
+  } else {
+    item.used = true;
+    showToast(`◆ Used: ${item.name}`);
+  }
+
+  renderAdventureInventory();
+  saveCurrentWorld();
+
+  // Synthetic choice that feeds into scene continuation as the player's action
+  const useAction = `Uses the ${item.name} — ${item.usefulFor || 'with hopes it will help'}.`;
+  await generateAdventureScene('CONTINUATION', useAction);
 }
 
 /** Render the character identity card */
@@ -2349,6 +2595,12 @@ async function generateAdventureScene(sceneType, prevChoice, retryAttempt = 0) {
       ? `\nPLAYER STATUS: ${adv.playerStatus.toUpperCase()} — ${describeStatusContext(adv)}`
       : '';
 
+    // Active objectives — what the LLM should pull the story toward
+    const activeObjs = (adv.objectives || []).filter(o => o.status === 'active');
+    const objectivesCtx = activeObjs.length
+      ? activeObjs.map(o => `[${o.id}] ${o.title} — ${o.description} (completes when: ${o.completionHint}; progress ${o.progress}/100)`).join('\n')
+      : 'No active objectives — focus on closure.';
+
     // Shared context block used by both calls — single source of truth
     const sharedCtx = `WORLD: "${W.worldName}" (${W.genre})
 WORLD LORE: ${buildWorldContext()}
@@ -2361,6 +2613,9 @@ EXHAUSTION: ${inv.exhaustion}/${inv.maxExhaustion} (${exhaustionLabel})
 SUSPICION: ${inv.suspicion}/${inv.maxSuspicion} (${suspicionLabel})${statusLine}
 FACTION RELATIONS: ${standingCtx}
 STORY HISTORY: ${historyCtx || 'This is the beginning.'}
+
+ACTIVE OBJECTIVES:
+${objectivesCtx}
 
 LOCAL NPCS: ${npcCtx}
 ENVIRONMENT: ${envCtx}
@@ -2382,6 +2637,12 @@ WRITING STYLE — CRITICAL:
 - Reference at least one named element from the world lore.
 - At least one NPC should be present or mentioned (use LOCAL NPCS if they fit — otherwise introduce a new named person with agency).
 - At least one environmental detail should be something the player could interact with (a crate, graffiti, an herb, a posted notice, etc).
+
+OBJECTIVE-DRIVEN STORY — IMPORTANT:
+- The story must MOVE the player toward their active objectives, not just present unrelated atmospheric scenes.
+- Every scene should relate to at least one active objective: a clue, an obstacle, an ally who can help, an enemy who blocks the way, or a real opportunity to make progress.
+- Do NOT remind the player of their objectives in narration — show, don't list.
+- Avoid meandering exposition. Things should HAPPEN in this scene.
 
 Output only the narrative prose. Start writing now.`,
       { maxTokens: 800 }
@@ -2410,6 +2671,14 @@ SCHEMA RULES:
 - Each choice's "consequence" hint should TELEGRAPH risk in plain language (e.g., "Risky — the guards may notice", "Safe but slow"). This restores agency.
 - Each choice has a "riskLevel" field: "low", "moderate", "high", or "deadly".
 
+OBJECTIVE PROGRESSION — REQUIRED:
+- The active objectives in context have IDs. If a choice would advance, complete, or fail an objective, mark it via objectiveProgress.
+- AT LEAST ONE choice per scene should have an objectiveProgress field that advances or completes an objective. Otherwise the story stalls.
+- Use status="advanced" with a progress increment (0..100) for partial progress (typical: 15-30 points).
+- Use status="completed" only when the choice DEFINITIVELY meets the objective's completionHint.
+- Use status="failed" only when the choice irrecoverably loses the objective (a key NPC dies, the McGuffin is destroyed, etc.).
+- Do NOT mark progress on every choice — only where it makes narrative sense.
+
 PLAYER STATUS RULES:
 - If player status is "captured", choices should focus on escape, persuasion, or waiting; one should attempt freedom (escapeAttempt=true).
 - If "disgraced", choices should center on rebuilding standing or fleeing.
@@ -2426,10 +2695,10 @@ Return ONLY this JSON:
     {"name":"…","type":"herb|tool|currency|document|curio|food|weapon","risk":"safe|watched|guarded|cursed","description":"1 sentence"}
   ],
   "choices": [
-    {"id":"a","text":"…","consequence":"…","riskLevel":"low|moderate|high|deadly","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
-    {"id":"b","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
-    {"id":"c","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false},
-    {"id":"d","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false}
+    {"id":"a","text":"…","consequence":"…","riskLevel":"low|moderate|high|deadly","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false,"objectiveProgress":null},
+    {"id":"b","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false,"objectiveProgress":null},
+    {"id":"c","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false,"objectiveProgress":null},
+    {"id":"d","text":"…","consequence":"…","riskLevel":"low","affectsFaction":null,"standingChange":0,"healthChange":0,"exhaustionChange":0,"suspicionChange":0,"itemGained":null,"itemLost":null,"insightGained":null,"npcInteraction":null,"npcDispositionChange":0,"scavengeTarget":null,"canCapture":false,"escapeAttempt":false,"objectiveProgress":null}
   ],
   "worldPulse": "One sentence about wider world, or null"
 }
@@ -2444,7 +2713,8 @@ FIELD NOTES:
 - escapeAttempt: true for captured-state choices that try to break free
 - npcInteraction: null OR exact name from npcsPresent
 - npcDispositionChange: integer from -40 to +40 (only with npcInteraction)
-- scavengeTarget: null OR exact name from environmentalResources`,
+- scavengeTarget: null OR exact name from environmentalResources
+- objectiveProgress: null OR {"id":"obj_X","status":"advanced|completed|failed","progress":15} where id matches an active objective. Use "advanced" with progress 15-30 for partial steps; "completed" only when truly done; "failed" only when irrecoverably lost.`,
       { maxTokens: 1800 }
     );
 
@@ -2730,6 +3000,12 @@ async function makeAdventureChoice(choiceId) {
 
   if (toastLines.length) showToast(toastLines.join(' · '));
 
+  // Apply any objective progression the LLM marked on this choice
+  let objectiveTriggeredEnd = false;
+  if (choice.objectiveProgress && choice.objectiveProgress.id) {
+    objectiveTriggeredEnd = applyObjectiveUpdate(choice.objectiveProgress);
+  }
+
   // Log to journey
   adv.history.push({
     chapter:    adv.chapter - 1,
@@ -2766,11 +3042,12 @@ async function makeAdventureChoice(choiceId) {
   });
 
   // ── FAILURE-STATE TRANSITIONS — checked in priority order ──
+  // 0. Objective triggered win/loss — already handled above, just exit
   // 1. Death (health 0) — irrecoverable, triggers legacy modal
   // 2. Capture (suspicion ≥ maxSuspicion OR explicit canCapture roll)
   // 3. Disgrace (any major faction standing ≤ -75)
   // 4. Exhaustion (exhaustion ≥ maxExhaustion)
-  // Only the first triggered transition fires per choice.
+  if (objectiveTriggeredEnd) return;
 
   const triggeredFailure = checkFailureStates(choice);
   if (triggeredFailure) {
@@ -2915,6 +3192,126 @@ async function handlePlayerDeath() {
   openModal('deathChoiceModal');
 }
 
+/**
+ * Triggered when all 3 objectives are completed — the win condition.
+ * Generates a triumphant ending epitaph and offers the "begin a new story" option.
+ */
+async function handleAdventureVictory() {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  $('advNarrative').innerHTML = '<div class="adv-loading">Your story reaches its triumphant end…</div>';
+  $('advChoices').innerHTML   = '';
+  // Disable any pending choice clicks
+  $('advChoices').querySelectorAll('button').forEach(b => b.disabled = true);
+
+  try {
+    const objSummary = (adv.objectives || []).map(o => `- ${o.title}: ${o.description}`).join('\n');
+    const raw = await callApi(
+      `Write a triumphant ending for ${adv.playerName || 'this hero'} in "${W.worldName}".
+
+They completed all three of their objectives:
+${objSummary}
+
+After ${adv.chapter} chapters in ${adv.currentRegion || 'the world'}, with their faction ${adv.playerFaction?.name || 'unaffiliated'}.
+
+Write 3-4 SHORT paragraphs:
+1. The moment of completion — what victory looks like
+2. The cost or change it brought
+3. What this character chooses to do next, or what becomes of them
+4. A final image or line that lands
+
+Style: Clear, plain language. Earned, not melodramatic. End on a satisfying note.`,
+      { maxTokens: 700 }
+    );
+
+    const html = (raw || '').split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p)}</p>`).join('');
+    $('advNarrative').innerHTML = `
+      <div class="adv-victory-banner">✓ VICTORY — All Objectives Complete</div>
+      ${html}`;
+  } catch (err) {
+    $('advNarrative').innerHTML = `
+      <div class="adv-victory-banner">✓ VICTORY — All Objectives Complete</div>
+      <p>${esc(adv.playerName || 'You')} completed every goal that mattered. The story closes here, on your own terms.</p>`;
+  }
+
+  // Archive into legacy chain so a future run can reference this triumph
+  adv.legacyChain = adv.legacyChain || [];
+  adv.legacyChain.push({
+    name:         adv.playerName || 'The Triumphant',
+    faction:      adv.playerFaction?.name || null,
+    origin:       adv.playerOrigin?.name  || null,
+    chapters:     adv.chapter,
+    deathRegion:  adv.currentRegion || null,
+    finalItems:   AppState.adventureInventory.items.slice(0, 3),
+    outcome:      'victory',
+  });
+  adv.active = false;
+  saveCurrentWorld();
+
+  $('advChoices').innerHTML = `<button class="btn-forge" id="btnAdvRestartFromEnd">✦ Begin a New Story</button>`;
+  $('btnAdvRestartFromEnd')?.addEventListener('click', () => { resetAdventure(false); });
+}
+
+/**
+ * Triggered when an objective fails irrecoverably — the lose condition that
+ * isn't death. Treats this as the end of THIS character's story; offers legacy.
+ */
+async function handleAdventureLoss(reason) {
+  const W   = AppState.world;
+  const adv = AppState.adventure;
+
+  $('advNarrative').innerHTML = '<div class="adv-loading">The story turns dark…</div>';
+  $('advChoices').innerHTML   = '';
+  $('advChoices').querySelectorAll('button').forEach(b => b.disabled = true);
+
+  try {
+    const failedObj = (adv.objectives || []).find(o => o.status === 'failed');
+    const raw = await callApi(
+      `Write a somber ending for ${adv.playerName || 'this character'} in "${W.worldName}".
+
+The story ends because ${failedObj ? `they failed: "${failedObj.title}" — ${failedObj.description}` : reason}.
+
+Write 3 SHORT paragraphs:
+1. The moment of the irreversible loss
+2. What that means for ${adv.playerName || 'them'} — withdrawal, regret, departure
+3. A final image that doesn't sugarcoat it
+
+Style: Plain language. Honest. Don't lecture. End with what happens next, or where they end up.`,
+      { maxTokens: 600 }
+    );
+
+    const html = (raw || '').split('\n\n').filter(p => p.trim()).map(p => `<p>${esc(p)}</p>`).join('');
+    $('advNarrative').innerHTML = `
+      <div class="adv-loss-banner">✕ STORY ENDS — Objective Lost</div>
+      ${html}`;
+  } catch (err) {
+    $('advNarrative').innerHTML = `
+      <div class="adv-loss-banner">✕ STORY ENDS — Objective Lost</div>
+      <p>${esc(reason || 'Some doors, once closed, cannot be reopened.')}</p>`;
+  }
+
+  adv.legacyChain = adv.legacyChain || [];
+  adv.legacyChain.push({
+    name:         adv.playerName || 'The Lost',
+    faction:      adv.playerFaction?.name || null,
+    origin:       adv.playerOrigin?.name  || null,
+    chapters:     adv.chapter,
+    deathRegion:  adv.currentRegion || null,
+    finalItems:   AppState.adventureInventory.items.slice(0, 3),
+    outcome:      'failed_objective',
+  });
+  adv.active = false;
+  saveCurrentWorld();
+
+  // Offer both: end the story OR continue as legacy character
+  $('advChoices').innerHTML = `
+    <button class="btn-forge" id="btnAdvLossLegacy">↺ Continue as Legacy Heir</button>
+    <button class="btn-secondary" id="btnAdvLossEnd">End the Story</button>`;
+  $('btnAdvLossLegacy')?.addEventListener('click', () => startLegacyAdventure());
+  $('btnAdvLossEnd')?.addEventListener('click', () => { resetAdventure(false); });
+}
+
 /** The player chose to end the story — show the final epitaph */
 async function showEndingEpitaph() {
   const W   = AppState.world;
@@ -3017,7 +3414,7 @@ function startLegacyAdventure() {
     factionStanding: inheritedStandings,
     currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
-    playerStatus: 'active', statusContext: null,
+    objectives: [], playerStatus: 'active', statusContext: null,
     legacyChain: preservedLegacy,
     // Legacy-specific fields — flagged so beginAdventure can reference them
     _inheritedFrom: predecessor.name,
@@ -3691,6 +4088,7 @@ function bindEvents() {
             renderAdventureInventory();
             renderAdventureNpcs();
             renderAdventureEnvironment();
+            renderObjectives();
             $('advChapterBadge').textContent = `Chapter ${AppState.adventure.chapter}`;
             // Rebuild journey log
             const logEl = $('advLog');

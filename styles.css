@@ -2608,3 +2608,268 @@ body{
   border-left-color: var(--gold-dim);
   color: var(--gold-dim);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   OBJECTIVES PANEL — persistent goals above the narrative
+   ═══════════════════════════════════════════════════════════ */
+.adv-objectives {
+  margin: .65rem .65rem .35rem;
+  padding: .7rem .9rem;
+  background: #faf3e0;
+  border: 1px solid rgba(166, 124, 47, 0.22);
+  border-left: 3px solid var(--gold);
+  border-radius: var(--rlg);
+  box-shadow: var(--shadow-card);
+}
+
+.adv-obj-head {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: .55rem;
+  padding-bottom: .45rem;
+  border-bottom: 1px solid rgba(166, 124, 47, 0.18);
+}
+
+.adv-obj-title {
+  font-family: var(--fd);
+  font-size: .68rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.adv-obj-count {
+  font-family: var(--fb);
+  font-size: .72rem;
+  color: var(--muted);
+  font-style: italic;
+  flex: 1;
+}
+
+.adv-obj-toggle {
+  background: none;
+  border: 1px solid var(--bord);
+  color: var(--gold-dim);
+  font-family: var(--fd);
+  font-size: .9rem;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  transition: all var(--t);
+}
+.adv-obj-toggle:hover {
+  background: rgba(166, 124, 47, 0.1);
+  color: var(--gold);
+}
+
+.adv-obj-list {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+
+.adv-obj-card {
+  padding: .5rem .6rem;
+  background: rgba(166, 124, 47, 0.04);
+  border: 1px solid rgba(166, 124, 47, 0.15);
+  border-radius: 3px;
+  transition: all var(--t);
+}
+
+.adv-obj-card.adv-obj-completed {
+  background: rgba(90, 138, 74, 0.08);
+  border-color: rgba(90, 138, 74, 0.3);
+  opacity: .85;
+}
+.adv-obj-card.adv-obj-failed {
+  background: rgba(168, 48, 32, 0.06);
+  border-color: rgba(168, 48, 32, 0.3);
+  opacity: .7;
+}
+
+.adv-obj-row {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  margin-bottom: .2rem;
+}
+
+.adv-obj-icon {
+  font-family: var(--fd);
+  font-size: .9rem;
+  color: var(--gold);
+  width: 1em;
+}
+.adv-obj-completed .adv-obj-icon { color: var(--ok); }
+.adv-obj-failed    .adv-obj-icon { color: var(--err); }
+
+.adv-obj-name {
+  font-family: var(--fd);
+  font-size: .82rem;
+  color: var(--parch);
+  font-weight: 600;
+  letter-spacing: .02em;
+  flex: 1;
+}
+.adv-obj-completed .adv-obj-name { text-decoration: line-through; color: var(--muted); }
+.adv-obj-failed    .adv-obj-name { color: var(--muted); }
+
+.adv-obj-diff {
+  font-family: var(--fd);
+  font-size: .54rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: .12rem .4rem;
+  border-radius: 2px;
+}
+.adv-obj-diff-low      { background: rgba(90, 138, 74, .15);  color: var(--ok); }
+.adv-obj-diff-moderate { background: rgba(166, 124, 47, .15); color: var(--gold); }
+.adv-obj-diff-high     { background: rgba(196, 106, 32, .15); color: var(--heal); }
+
+.adv-obj-desc {
+  font-family: var(--fb);
+  font-size: .82rem;
+  line-height: 1.45;
+  color: var(--parch-dim);
+  font-style: italic;
+}
+
+.adv-obj-prog {
+  margin-top: .35rem;
+  height: 3px;
+  background: rgba(166, 124, 47, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.adv-obj-prog-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width .5s ease;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INVENTORY — usable items, used/cursed badges, more scroll
+   ═══════════════════════════════════════════════════════════ */
+.adv-inventory {
+  max-height: 280px;  /* was 180 — give more room for collected items */
+}
+
+.adv-inv-count {
+  font-family: var(--fb);
+  font-size: .68rem;
+  color: var(--muted);
+  font-style: italic;
+  font-weight: normal;
+  letter-spacing: .02em;
+  margin-left: .25rem;
+}
+
+.adv-inv-badge {
+  font-family: var(--fd);
+  font-size: .52rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: .08rem .35rem;
+  border-radius: 2px;
+  margin-left: .25rem;
+}
+.adv-inv-badge-used {
+  background: rgba(166, 124, 47, .15);
+  color: var(--gold-dim);
+}
+.adv-inv-badge-cursed {
+  background: rgba(168, 48, 32, .12);
+  color: var(--err);
+}
+
+.adv-inv-item.adv-inv-used {
+  opacity: .55;
+  border-left-color: var(--muted);
+}
+.adv-inv-item.adv-inv-cursed {
+  border-left-color: var(--err);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ITEM MODAL — Use button + cursed/used flags
+   ═══════════════════════════════════════════════════════════ */
+.item-modal-cursed {
+  margin-bottom: .8rem;
+  padding: .55rem .8rem;
+  background: rgba(168, 48, 32, .08);
+  border-left: 3px solid var(--err);
+  border-radius: 3px;
+  color: var(--err);
+  font-family: var(--fb);
+  font-size: .82rem;
+  font-style: italic;
+}
+.item-modal-used {
+  margin-bottom: .8rem;
+  padding: .55rem .8rem;
+  background: rgba(166, 124, 47, .08);
+  border-left: 3px solid var(--gold-dim);
+  border-radius: 3px;
+  color: var(--gold-dim);
+  font-family: var(--fb);
+  font-size: .82rem;
+  font-style: italic;
+}
+
+#btnItemUse {
+  font-family: var(--fd);
+  letter-spacing: .08em;
+  background: rgba(166, 124, 47, .12);
+  color: var(--gold);
+  border: 1px solid rgba(166, 124, 47, .4);
+  padding: .55rem 1.1rem;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: .8rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  transition: all var(--t);
+}
+#btnItemUse:hover {
+  background: rgba(166, 124, 47, .2);
+  color: var(--gold-bright);
+  border-color: var(--gold);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   VICTORY / LOSS BANNERS
+   ═══════════════════════════════════════════════════════════ */
+.adv-victory-banner,
+.adv-loss-banner {
+  font-family: var(--fd);
+  font-size: 1rem;
+  letter-spacing: .25em;
+  text-transform: uppercase;
+  font-weight: 600;
+  text-align: center;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--rlg);
+}
+.adv-victory-banner {
+  background: rgba(90, 138, 74, .12);
+  color: var(--ok);
+  border: 1px solid rgba(90, 138, 74, .4);
+}
+.adv-loss-banner {
+  background: rgba(168, 48, 32, .08);
+  color: var(--err);
+  border: 1px solid rgba(168, 48, 32, .35);
+}

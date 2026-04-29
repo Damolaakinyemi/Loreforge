@@ -1071,6 +1071,15 @@ function renderMap() {
     regionName => openRegionModal(regionName),
     AppState.ui.mapOverlay || 'illustrated'
   );
+  refreshMapArtButtonVisibility();
+}
+
+/** Show the "Clear Art" button only when the world has artwork to clear. */
+function refreshMapArtButtonVisibility() {
+  const btn = $('btnClearMapArt');
+  if (!btn) return;
+  const has = !!(AppState.world && AppState.world.mapArtwork);
+  btn.style.display = has ? '' : 'none';
 }
 
 function renderMiniMapView() {
@@ -3901,6 +3910,66 @@ Include: textured aged parchment background with tea-stained edges, rolling land
   }
 }
 
+/**
+ * Upload a user-supplied map image (PNG/JPG/WebP) and use it as the world's
+ * map artwork backdrop. Same render pipeline as the Gemini-generated artwork.
+ *
+ * The user can use any external tool (Azgaar's Fantasy Map Generator, Inkarnate,
+ * Wonderdraft, etc.) to create the map, then upload the export here.
+ *
+ * Validation:
+ *   - File must be image/png, image/jpeg, or image/webp
+ *   - File size capped at 4MB to keep localStorage saves manageable
+ *   - Stored as data URL on world.mapArtwork (same field Gemini uses)
+ */
+function uploadMapArtworkFromFile(file) {
+  if (!hasWorld()) { showToast('No world loaded.'); return; }
+  if (!file) return;
+
+  const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+  if (!validTypes.includes(file.type)) {
+    showToast(`Unsupported file type (${file.type}). Use PNG, JPG, or WebP.`);
+    return;
+  }
+
+  // 4MB ceiling — base64 inflation pushes ~5.5MB into localStorage
+  const MAX_BYTES = 4 * 1024 * 1024;
+  if (file.size > MAX_BYTES) {
+    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+    showToast(`Image too large (${sizeMB}MB). Maximum is 4MB. Try resizing it first.`);
+    return;
+  }
+
+  const W = AppState.world;
+  if (W.mapArtwork) {
+    if (!confirm('Replace the existing map artwork with this upload?')) return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const dataUrl = e.target.result;
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
+        throw new Error('File could not be read as an image.');
+      }
+      W.mapArtwork = dataUrl;
+      saveCurrentWorld();
+      renderMap();
+      const sizeKB = Math.round(file.size / 1024);
+      showToast(`✓ Map uploaded (${sizeKB}KB). Toggle overlays to see it through different views.`);
+      diagLog('ok', `Map artwork uploaded: ${file.name} (${sizeKB}KB)`);
+    } catch (err) {
+      showToast(`Upload failed: ${err.message}`);
+      recordDiagError('upload', err.message);
+    }
+  };
+  reader.onerror = () => {
+    showToast('Failed to read the file.');
+    recordDiagError('upload', 'FileReader error');
+  };
+  reader.readAsDataURL(file);
+}
+
 function exportJSON() {
   if(!hasWorld()){showToast('No world to export.');return;}
   const blob=new Blob([JSON.stringify(AppState.world,null,2)],{type:'application/json'});
@@ -4058,6 +4127,28 @@ function bindEvents() {
   $('btnSimToggle').addEventListener('click',()=>setNav('nova'));
   $('btnDndToggle').addEventListener('click',()=>setNav('dnd'));
   $('btnGenerateArtwork')?.addEventListener('click', generateMapArtworkForCurrentWorld);
+  $('btnUploadMapArt')?.addEventListener('click', () => {
+    const W = AppState.world;
+    if (W && W.mapArtwork) {
+      if (!confirm('Replace the existing map artwork with a new upload?')) return;
+    }
+    const input = $('uploadMapArtInput');
+    if (input) { input.value = ''; input.click(); }
+  });
+  $('btnClearMapArt')?.addEventListener('click', () => {
+    const W = AppState.world;
+    if (!W || !W.mapArtwork) return;
+    if (!confirm('Remove the map artwork backdrop?')) return;
+    W.mapArtwork = null;
+    saveCurrentWorld();
+    renderMap();
+    showToast('Map artwork cleared.');
+    refreshMapArtButtonVisibility();
+  });
+  $('uploadMapArtInput')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) uploadMapArtworkFromFile(file);
+  });
   $('btnExport').addEventListener('click',exportJSON);
   $('btnSaveNow').addEventListener('click',doSave);
 

@@ -383,6 +383,7 @@ export function hasWorld() { return AppState.world!==null; }
 const USERS_KEY  = 'lf_users_v3';
 const SAVES_KEY  = 'lf_saves_v3';   // per-user save slots
 const API_KEY_K  = 'lf_apikey';
+const GEMINI_KEY_K = 'lf_geminikey';
 const SESSION_K  = 'lf_session';
 
 function getUsers()  { try{return JSON.parse(localStorage.getItem(USERS_KEY)||'{}')}catch{return{}} }
@@ -423,6 +424,13 @@ export function logoutUser() {
 
 export function saveApiKey(key) { try{localStorage.setItem(API_KEY_K,key)}catch{} }
 export function loadApiKey()    { try{return localStorage.getItem(API_KEY_K)||''}catch{return''} }
+
+/**
+ * Optional Gemini API key — used only for map artwork generation.
+ * The app works without it; only the "Generate Map Artwork" button is gated by it.
+ */
+export function saveGeminiKey(key) { try{localStorage.setItem(GEMINI_KEY_K,key)}catch{} }
+export function loadGeminiKey()    { try{return localStorage.getItem(GEMINI_KEY_K)||''}catch{return''} }
 
 // ── WORLD SAVE SLOTS ─────────────────────────────
 export function getUserSaves(username) {

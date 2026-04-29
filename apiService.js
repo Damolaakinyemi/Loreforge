@@ -3,11 +3,16 @@
  * Handles retries, key injection, structured errors, and JSON parsing.
  */
 
-import { loadApiKey } from './state.js';
+import { loadApiKey, loadGeminiKey } from './state.js';
 
 const API_URL   = 'https://api.anthropic.com/v1/messages';
 const MODEL     = 'claude-sonnet-4-20250514';
 const MAX_RETRY = 2;
+
+// Gemini Imagen — used only for optional map artwork generation.
+// Endpoint and model are stable as of late 2025. The model returns base64 image
+// data inline as part of the generateContent response.
+const GEMINI_URL   = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent';
 
 export const apiMetrics = {
   lastLatencyMs: 0,
@@ -174,6 +179,86 @@ function parseHttpError(status, body) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Generate map artwork using Gemini's Nano Banana image generation.
+ * Returns a data URL (data:image/png;base64,...) that can be used directly
+ * as an SVG image href or background-image. Caller stores it in world state.
+ *
+ * Throws ApiError on missing key, network failure, or empty response.
+ *
+ * @param {string} prompt — the descriptive prompt for the map
+ * @returns {Promise<string>} data URL of the generated PNG
+ */
+export async function generateMapArtwork(prompt) {
+  const key = loadGeminiKey();
+  if (!key) throw new ApiError('No Gemini API key set. Add it in the API Keys modal.', 'NO_GEMINI_KEY');
+
+  const body = {
+    contents: [{
+      parts: [{ text: prompt }],
+    }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+    },
+  };
+
+  const t0 = Date.now();
+  let response;
+  try {
+    response = await fetch(GEMINI_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': key,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ApiError(`Network error reaching Gemini: ${err.message}`, 'GEMINI_NETWORK');
+  }
+  apiMetrics.lastLatencyMs = Date.now() - t0;
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    const code    = response.status;
+    let msg = `Gemini error ${code}`;
+    if (code === 401 || code === 403) msg = 'Gemini API key rejected. Double-check the key.';
+    else if (code === 429)            msg = 'Gemini rate limit hit. Wait and retry.';
+    else if (code >= 500)             msg = `Gemini server error ${code}. Try again later.`;
+    else                              msg = `${msg}: ${errText.slice(0, 100)}`;
+    throw new ApiError(msg, 'GEMINI_HTTP_' + code);
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (err) {
+    throw new ApiError('Gemini returned non-JSON response.', 'GEMINI_PARSE');
+  }
+
+  // The image comes back as inline_data inside the candidate's parts array
+  const candidates = data.candidates || [];
+  for (const candidate of candidates) {
+    const parts = candidate?.content?.parts || [];
+    for (const part of parts) {
+      const inline = part.inline_data || part.inlineData;  // both spellings have appeared
+      if (inline && inline.data) {
+        const mimeType = inline.mime_type || inline.mimeType || 'image/png';
+        return `data:${mimeType};base64,${inline.data}`;
+      }
+    }
+  }
+
+  // If we get here Gemini gave us text but no image — surface that text in the error
+  const textBack = candidates[0]?.content?.parts?.[0]?.text || '';
+  throw new ApiError(
+    textBack
+      ? `Gemini returned text instead of an image: ${textBack.slice(0, 120)}`
+      : 'Gemini returned no image data.',
+    'GEMINI_NO_IMAGE'
+  );
+}
 
 export class ApiError extends Error {
   constructor(message, code = 'UNKNOWN') { super(message); this.name = 'ApiError'; this.code = code; }

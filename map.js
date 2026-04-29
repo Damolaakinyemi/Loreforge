@@ -871,13 +871,32 @@ export function renderIllustratedMap(svgId, world, novaState, onRegionClick, ove
     </linearGradient>`;
   svg.appendChild(defs);
 
-  // Parchment base
-  svg.appendChild(mk('rect', { width:vw, height:vh, fill:'url(#parchGrad)' }));
+  // Parchment base — when AI artwork is present, drop opacity so the
+  // painted backdrop shows through. Otherwise it sits at full opacity as before.
+  const hasArtwork = !!(world.mapArtwork && typeof world.mapArtwork === 'string' && world.mapArtwork.startsWith('data:image'));
+  const parchOpacity = hasArtwork ? 0.35 : 1.0;
+  svg.appendChild(mk('rect', { width:vw, height:vh, fill:'url(#parchGrad)', 'fill-opacity': parchOpacity }));
 
-  // Sea overlay (tinted blue-green over parchment)
-  svg.appendChild(mk('rect', { width:vw, height:vh, fill:'url(#seaGrad)' }));
+  // Painted artwork backdrop — sits between parchment and sea overlay
+  if (hasArtwork) {
+    const img = mk('image', {
+      x: 0, y: 0, width: vw, height: vh,
+      preserveAspectRatio: 'xMidYMid slice',
+      opacity: 0.85,
+    });
+    img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', world.mapArtwork);
+    img.setAttribute('href', world.mapArtwork);  // newer SVG namespace too
+    svg.appendChild(img);
+  }
 
-  // Vignette
+  // Sea overlay (tinted blue-green) — also dimmed when artwork is showing
+  // so we don't wash out the painted seas
+  svg.appendChild(mk('rect', {
+    width:vw, height:vh, fill:'url(#seaGrad)',
+    'fill-opacity': hasArtwork ? 0.25 : 1.0,
+  }));
+
+  // Vignette — keep the corner darkening regardless
   svg.appendChild(mk('rect', { width:vw, height:vh, fill:'url(#vignette)' }));
 
   const regions = world.regions || [];

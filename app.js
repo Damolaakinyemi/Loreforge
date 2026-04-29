@@ -13,12 +13,13 @@ import {
   getEntrySubLabel, hasWorld,
   registerUser, loginUser, logoutUser, restoreSession,
   saveApiKey, loadApiKey,
+  saveGeminiKey, loadGeminiKey,
   getUserSaves, saveWorldSlot, loadWorldSlot, deleteWorldSlot, saveCurrentWorld,
   saveInterviewProgress, loadInterviewProgress, clearInterviewProgress,
   saveOracleChat, loadOracleChat, clearOracleChat,
   saveAdventureState, getAdventureSaves, loadAdventureSave, deleteAdventureSave,
 } from './state.js';
-import {callApi as _callApi, parseJsonResponse, ApiError} from './apiService.js';
+import {callApi as _callApi, parseJsonResponse, ApiError, generateMapArtwork} from './apiService.js';
 
 /** Wrapped callApi that tracks invocation count for cost awareness */
 async function callApi(prompt, options = {}) {
@@ -106,7 +107,19 @@ function openApiKeyModal() {
   if (status) {
     status.textContent = existing
       ? 'Key is set. Replace it if you want to use a different one.'
-      : 'No key saved yet. Paste yours here.';
+      : 'Get a key at console.anthropic.com';
+  }
+  // Populate Gemini key too (optional)
+  const gemInput  = $('geminiKeyInput');
+  const gemStatus = $('geminiKeyStatus');
+  if (gemInput) {
+    const gem = loadGeminiKey();
+    gemInput.value = gem || '';
+    if (gemStatus) {
+      gemStatus.textContent = gem
+        ? 'Gemini key is set — map artwork is enabled.'
+        : 'Optional. Get a free key at aistudio.google.com';
+    }
   }
   openModal('apiKeyModal');
   setTimeout(() => input.focus(), 100);
@@ -3824,6 +3837,70 @@ function doSave() {
   else showToast(`Save failed: ${r.error}`);
 }
 
+/**
+ * Generate AI-painted map artwork for the current world via Gemini.
+ * Stores the result as a data URL on world.mapArtwork and re-renders the map.
+ *
+ * Flow:
+ * 1. Validate Gemini key is set (otherwise prompt user to add one)
+ * 2. Confirm if artwork already exists (regen costs another API call)
+ * 3. Build a descriptive prompt from the world's lore
+ * 4. Call Gemini, store result, save, re-render
+ */
+async function generateMapArtworkForCurrentWorld() {
+  if (!hasWorld()) { showToast('No world loaded.'); return; }
+  if (!loadGeminiKey()) {
+    showToast('Add a Gemini API key first.');
+    openApiKeyModal();
+    return;
+  }
+
+  const W = AppState.world;
+  if (W.mapArtwork) {
+    if (!confirm('Replace the existing map artwork? This costs another Gemini API call (~$0.04).')) return;
+  } else {
+    if (!confirm('Generate a Gemini-painted map backdrop?\n\nThis takes 10-20 seconds and costs roughly $0.04 in Gemini API usage. The free tier covers many generations before you pay anything.')) return;
+  }
+
+  const btn = $('btnGenerateArtwork');
+  const oldText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '🎨 Painting…'; }
+
+  try {
+    // Build a rich descriptive prompt from the world's lore
+    const regions = (W.regions || []).slice(0, 6).map(r => `${r.name} (${r.type || 'unknown terrain'})`).join(', ');
+    const factions = (W.factions || []).slice(0, 4).map(f => f.name).join(', ');
+    const tone = W.genre || 'fantasy';
+
+    const prompt = `Paint a beautiful old-world illustrated fantasy map in the style of vintage 1500s-1700s cartography — aged parchment, hand-drawn ink linework, sepia and muted earth tones, decorative scrollwork.
+
+The map depicts the world of "${W.worldName}" (${tone}).
+Key regions to suggest visually: ${regions || 'varied terrain'}.
+${factions ? `Notable factions in this world: ${factions}.` : ''}
+${W.overview ? `Atmosphere: ${W.overview.slice(0, 200)}` : ''}
+
+Include: textured aged parchment background with tea-stained edges, rolling landmasses with hand-drawn coastlines, mountains as small triangle clusters, forests as tree pictograms, rivers as wavy lines, a few sailing ships in the open ocean, a sea monster or two, a compass rose, and decorative scrollwork around the edges. NO text labels — leave space for labels to be added later. Wide aspect ratio, atmospheric and painterly, NOT photographic. Top-down map perspective with slight isometric tilt for terrain features. Background dominated by warm cream parchment color (#f0e6d0).`;
+
+    showToast('Generating map artwork — this may take 10-20 seconds…');
+
+    const dataUrl = await generateMapArtwork(prompt);
+
+    W.mapArtwork = dataUrl;
+    saveCurrentWorld();
+
+    // Re-render the map with the new backdrop
+    renderMap();
+    showToast('✓ Map artwork generated. Toggle overlays to see it through different views.');
+    diagLog('ok', 'Map artwork generated via Gemini');
+
+  } catch (err) {
+    showToast(`Artwork generation failed: ${err.message}`);
+    recordDiagError('artwork', err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
+}
+
 function exportJSON() {
   if(!hasWorld()){showToast('No world to export.');return;}
   const blob=new Blob([JSON.stringify(AppState.world,null,2)],{type:'application/json'});
@@ -3921,19 +3998,36 @@ function bindEvents() {
   $('btnApiKeySettings')?.addEventListener('click', openApiKeyModal);
   $('btnApiKeyCancel')?.addEventListener('click', () => closeModal('apiKeyModal'));
   $('btnApiKeySave')?.addEventListener('click', () => {
-    const val = $('apiKeyInput').value.trim();
-    if (!val) { showToast('Enter a key or cancel.'); return; }
-    if (!val.startsWith('sk-ant-')) {
+    const anthVal = $('apiKeyInput').value.trim();
+    const gemVal  = $('geminiKeyInput')?.value.trim() || '';
+
+    if (!anthVal && !gemVal) { showToast('Enter at least one key or cancel.'); return; }
+
+    // Validate Anthropic key shape if provided
+    if (anthVal && !anthVal.startsWith('sk-ant-')) {
       if (!confirm('That does not look like an Anthropic API key (sk-ant-…). Save it anyway?')) return;
     }
-    saveApiKey(val);
+    // Gemini keys typically start with "AIza"; warn if not, don't block
+    if (gemVal && !gemVal.startsWith('AIza')) {
+      if (!confirm('That does not look like a Gemini API key (AIza…). Save it anyway?')) return;
+    }
+
+    if (anthVal) saveApiKey(anthVal);
+    if (gemVal)  saveGeminiKey(gemVal);
+
     closeModal('apiKeyModal');
-    // Hide hub banner
     const banner = $('hubApiBanner');
-    if (banner) banner.style.display = 'none';
-    showToast('API key saved.');
+    if (banner && anthVal) banner.style.display = 'none';
+
+    const parts = [];
+    if (anthVal) parts.push('Anthropic');
+    if (gemVal)  parts.push('Gemini');
+    showToast(`${parts.join(' & ')} key${parts.length > 1 ? 's' : ''} saved.`);
   });
   $('apiKeyInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('btnApiKeySave')?.click();
+  });
+  $('geminiKeyInput')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') $('btnApiKeySave')?.click();
   });
 
@@ -3963,6 +4057,7 @@ function bindEvents() {
   // Map toolbar
   $('btnSimToggle').addEventListener('click',()=>setNav('nova'));
   $('btnDndToggle').addEventListener('click',()=>setNav('dnd'));
+  $('btnGenerateArtwork')?.addEventListener('click', generateMapArtworkForCurrentWorld);
   $('btnExport').addEventListener('click',exportJSON);
   $('btnSaveNow').addEventListener('click',doSave);
 

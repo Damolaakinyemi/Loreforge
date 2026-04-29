@@ -149,6 +149,7 @@
           </div>
           <button class="btn-sm" id="btnSimToggle">◎ Simulate</button>
           <button class="btn-sm" id="btnDndToggle">✦ Adventure</button>
+          <button class="btn-sm" id="btnGenerateArtwork" title="Generate AI-painted map backdrop (Gemini)">🎨 Artwork</button>
           <button class="btn-sm" id="btnExport">↓ Export</button>
           <button class="btn-sm" id="btnSaveNow">💾 Save</button>
           <span class="api-badge" id="apiBadge" title="API calls this session">⚡ 0</span>
@@ -383,23 +384,30 @@
   <!-- API KEY SETTINGS MODAL -->
   <div class="modal-overlay" id="apiKeyModal">
     <div class="modal">
-      <h3>🔑 Anthropic API Key</h3>
+      <h3>🔑 API Keys</h3>
       <div class="api-key-explain">
-        <p>Loreforge calls Anthropic's API directly from your browser. Your key is needed to generate worlds, simulations, and adventures.</p>
-        <p class="api-key-note"><strong>Your key is stored only in this browser's localStorage</strong> and is sent only to api.anthropic.com — never to any other server.</p>
+        <p>Loreforge calls AI APIs directly from your browser. The Anthropic key is required for world generation, simulation, and adventures. The Gemini key is optional and only used for AI-painted map artwork.</p>
+        <p class="api-key-note"><strong>Keys are stored only in this browser's localStorage</strong> and are sent only to their respective providers.</p>
         <div class="api-key-warning">
-          <strong>⚠️ Security caveat:</strong> Because the key lives in browser storage, any script running on this page can read it. Only use this on a machine you trust, avoid installing unknown browser extensions, and <strong>set a usage limit</strong> on your key in the Anthropic console. If you plan to share this app or host it publicly, route requests through a backend instead.
+          <strong>⚠️ Security caveat:</strong> Because keys live in browser storage, any script running on this page can read them. Only use this on a machine you trust, avoid installing unknown browser extensions, and <strong>set a usage limit</strong> on your keys in their respective consoles. If you plan to share this app or host it publicly, route requests through a backend instead.
         </div>
-        <p class="api-key-note">Don't have one? Get a key at <span class="api-key-link">console.anthropic.com</span>.</p>
       </div>
+
       <div class="field">
-        <label>Your API Key</label>
+        <label>Anthropic API Key (required)</label>
         <input id="apiKeyInput" type="password" placeholder="sk-ant-…" autocomplete="off"/>
-        <span class="field-hint" id="apiKeyStatus"></span>
+        <span class="field-hint" id="apiKeyStatus">Get a key at console.anthropic.com</span>
       </div>
+
+      <div class="field">
+        <label>Gemini API Key (optional — for map artwork)</label>
+        <input id="geminiKeyInput" type="password" placeholder="AIza…" autocomplete="off"/>
+        <span class="field-hint" id="geminiKeyStatus">Get a free key at aistudio.google.com</span>
+      </div>
+
       <div class="modal-btns">
         <button class="btn-cancel" id="btnApiKeyCancel">Cancel</button>
-        <button class="btn-generate" id="btnApiKeySave">Save Key</button>
+        <button class="btn-generate" id="btnApiKeySave">Save Keys</button>
       </div>
     </div>
   </div>

@@ -611,6 +611,9 @@ export function loadAdventureSave(idx) {
   if (!Array.isArray(AppState.adventure.objectives)) AppState.adventure.objectives = [];
   if (!AppState.adventure.playerStatus) AppState.adventure.playerStatus = 'active';
   if (AppState.adventure.statusContext === undefined) AppState.adventure.statusContext = null;
+  // activeDialogue is null when no conversation is in progress; otherwise
+  // { npcKey, npcName, history: [{role:'player'|'npc', text, options?}], turn }
+  if (AppState.adventure.activeDialogue === undefined) AppState.adventure.activeDialogue = null;
   if (typeof AppState.adventureInventory.exhaustion !== 'number') {
     AppState.adventureInventory.exhaustion = 0;
     AppState.adventureInventory.maxExhaustion = 100;

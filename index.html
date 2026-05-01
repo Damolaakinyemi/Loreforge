@@ -433,6 +433,24 @@
     </div>
   </div>
 
+  <!-- DIALOGUE OVERLAY — multi-turn NPC conversation -->
+  <div class="dlg-overlay" id="dlgOverlay">
+    <div class="dlg-modal">
+      <div class="dlg-header" id="dlgHeader">
+        <div class="dlg-head-name">…</div>
+      </div>
+      <div class="dlg-body" id="dlgBody"></div>
+      <div class="dlg-footer">
+        <div class="dlg-options" id="dlgOptions"></div>
+        <div class="dlg-input-row">
+          <input type="text" id="dlgInput" placeholder="Or say something else…" autocomplete="off"/>
+          <button class="btn-sm" id="dlgSendBtn">Send</button>
+          <button class="btn-sm dlg-leave" id="dlgLeaveBtn" title="End the conversation">Leave</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ADVENTURE LOAD / LEGACY MODAL -->
   <div class="modal-overlay" id="advLoadModal">
     <div class="modal modal-wide">

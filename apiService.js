@@ -52,6 +52,10 @@ export async function callApi(prompt, options = {}) {
       });
       apiMetrics.lastLatencyMs = Date.now() - t0;
       apiMetrics.totalCalls++;
+      // Notify listeners (e.g. UI badge) that a call completed
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('lf:api-call', { detail: apiMetrics }));
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -181,6 +185,60 @@ function parseHttpError(status, body) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 /**
+ * Parse a Gemini 429 error body to figure out what kind of quota was hit.
+ *
+ * Google's error JSON looks roughly like:
+ * {
+ *   "error": {
+ *     "code": 429,
+ *     "message": "Quota exceeded for quota metric ...",
+ *     "details": [
+ *       { "@type": "...QuotaFailure", "violations": [
+ *           { "quotaMetric": "...", "quotaId": "GenerateContentPaidTierImagesPerMinutePerProjectPerModel" }
+ *       ]},
+ *       { "@type": "...RetryInfo", "retryDelay": "30s" }
+ *     ]
+ *   }
+ * }
+ *
+ * Returns { kind: 'per_day' | 'per_minute' | 'unknown', retryAfterSec?: number }
+ */
+function parseGeminiQuotaError(errText) {
+  const result = { kind: 'unknown', retryAfterSec: null };
+  if (!errText) return result;
+
+  let body;
+  try { body = JSON.parse(errText); } catch { return result; }
+
+  const details = body?.error?.details || [];
+  const message = (body?.error?.message || '').toLowerCase();
+
+  for (const d of details) {
+    // QuotaFailure — names which quota metric was hit
+    if (Array.isArray(d.violations)) {
+      for (const v of d.violations) {
+        const id = (v.quotaId || v.quotaMetric || '').toLowerCase();
+        if (id.includes('perday') || id.includes('per_day')) { result.kind = 'per_day'; }
+        else if (id.includes('perminute') || id.includes('per_minute')) { result.kind = 'per_minute'; }
+      }
+    }
+    // RetryInfo — gives a suggested retry delay
+    if (d.retryDelay) {
+      const m = String(d.retryDelay).match(/(\d+)/);
+      if (m) result.retryAfterSec = parseInt(m[1], 10);
+    }
+  }
+
+  // Fallback to message-string heuristics if the structured details didn't help
+  if (result.kind === 'unknown') {
+    if (message.includes('per day') || message.includes('daily'))   result.kind = 'per_day';
+    else if (message.includes('per minute'))                         result.kind = 'per_minute';
+  }
+
+  return result;
+}
+
+/**
  * Generate map artwork using Gemini's Nano Banana image generation.
  * Returns a data URL (data:image/png;base64,...) that can be used directly
  * as an SVG image href or background-image. Caller stores it in world state.
@@ -223,11 +281,34 @@ export async function generateMapArtwork(prompt) {
     const errText = await response.text().catch(() => '');
     const code    = response.status;
     let msg = `Gemini error ${code}`;
-    if (code === 401 || code === 403) msg = 'Gemini API key rejected. Double-check the key.';
-    else if (code === 429)            msg = 'Gemini rate limit hit. Wait and retry.';
-    else if (code >= 500)             msg = `Gemini server error ${code}. Try again later.`;
-    else                              msg = `${msg}: ${errText.slice(0, 100)}`;
-    throw new ApiError(msg, 'GEMINI_HTTP_' + code);
+    let errCode = 'GEMINI_HTTP_' + code;
+    if (code === 401 || code === 403) {
+      msg = 'Gemini API key rejected. Double-check the key in API Keys settings.';
+    } else if (code === 429) {
+      // Parse the error body to distinguish per-minute vs per-day rate limits.
+      // Google's response includes details with quotaId / quotaMetric pointing
+      // at "PerMinute" vs "PerDay" violations.
+      const info = parseGeminiQuotaError(errText);
+      if (info.kind === 'per_day') {
+        msg = 'Daily Gemini image quota exhausted. Free tier resets at midnight Pacific. Either wait, enable billing in Google Cloud for higher limits, or use 📁 Upload Map with a PNG instead.';
+        errCode = 'GEMINI_QUOTA_DAY';
+      } else if (info.kind === 'per_minute') {
+        msg = 'Gemini per-minute rate limit hit. Wait 30-60 seconds and click 🎨 Artwork again. (Free tier image limits are tight — consider 📁 Upload Map for unlimited use.)';
+        errCode = 'GEMINI_QUOTA_MINUTE';
+      } else {
+        msg = 'Gemini rate limit hit. Wait a minute and retry, or use 📁 Upload Map to skip Gemini entirely.';
+        errCode = 'GEMINI_QUOTA';
+      }
+      // If Google sent a retry-after delay, surface it
+      if (info.retryAfterSec) {
+        msg += ` (Suggested wait: ${info.retryAfterSec}s.)`;
+      }
+    } else if (code >= 500) {
+      msg = `Gemini server error ${code}. Try again in a minute, or use 📁 Upload Map as a workaround.`;
+    } else {
+      msg = `${msg}: ${errText.slice(0, 120)}`;
+    }
+    throw new ApiError(msg, errCode);
   }
 
   let data;

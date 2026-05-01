@@ -281,7 +281,7 @@ export function resetAdventure(fullReset = false) {
     factionStanding: {}, currentRegion: null, history: [],
     currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
-    objectives: [], playerStatus: 'active', statusContext: null,
+    objectives: [], playerStatus: 'active', statusContext: null, activeDialogue: null,
     legacyChain: preservedLegacy,
   };
   AppState.adventureInventory = {
@@ -321,6 +321,7 @@ export async function beginAdventure() {
   adv.npcs        = {};
   adv.environment = {};
   adv.objectives  = [];
+  adv.activeDialogue = null;
 
   // Max health gets a small bonus from strength attribute
   const strengthBonus = Math.round((adv.playerArchetype.stats.strength - 25) / 2);
@@ -769,23 +770,32 @@ function renderAdventureNpcs() {
     <div class="adv-npc-head">Nearby (${recent.length})</div>
     <div class="adv-npc-list">
       ${recent.map(n => `
-        <div class="adv-npc-card" data-npc="${esc(n.id)}">
+        <div class="adv-npc-card">
           <div class="adv-npc-row">
-            <span class="adv-npc-name">${esc(n.name)}</span>
+            <span class="adv-npc-name" data-npc-detail="${esc(n.id)}">${esc(n.name)}</span>
             <span class="adv-npc-label">${label(n.disposition || 0)}</span>
           </div>
           <div class="adv-npc-role">${esc(n.role || '')}${n.faction ? ` · ${esc(n.faction)}` : ''}</div>
           ${dispBar(n.disposition || 0)}
+          <button class="adv-npc-talk-btn" data-npc-talk="${esc(n.id)}">💬 Talk to ${esc(n.name.split(' ')[0])}</button>
         </div>
       `).join('')}
     </div>`;
 
-  // Click to show details
-  container.querySelectorAll('.adv-npc-card').forEach(el => {
+  // Click name to show details
+  container.querySelectorAll('[data-npc-detail]').forEach(el => {
     el.addEventListener('click', () => {
-      const id = el.dataset.npc;
+      const id = el.dataset.npcDetail;
       const n  = adv.npcs[id];
       if (n) showNpcDetail(n);
+    });
+  });
+  // Click Talk button to start a dialogue
+  container.querySelectorAll('[data-npc-talk]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = el.dataset.npcTalk;
+      if (id) startDialogue(id);
     });
   });
 }
@@ -816,6 +826,310 @@ function showNpcDetail(npc) {
     </div>
     ${rel}`;
   openModal('itemDetailModal');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DIALOGUE SYSTEM — multi-turn NPC conversations
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Open a conversation with a specific NPC. Generates the NPC's opening line
+ * based on their disposition, role, and what they remember about the player.
+ *
+ * @param {string} npcKey — the lowercase normalized key from adv.npcs
+ */
+async function startDialogue(npcKey) {
+  const adv = AppState.adventure;
+  const npc = adv.npcs?.[npcKey];
+  if (!npc) { showToast('That person is not here.'); return; }
+
+  // Initialize the dialogue state
+  adv.activeDialogue = {
+    npcKey,
+    npcName: npc.name,
+    history: [],
+    turn: 0,
+    startDisposition: npc.disposition || 0,
+  };
+
+  // Open overlay immediately with loading state
+  openDialogueOverlay();
+  renderDialogue();
+  $('dlgBody').innerHTML = '<div class="dlg-loading">…</div>';
+
+  // Generate opening line
+  await generateNpcResponse(/* isOpening */ true);
+}
+
+/**
+ * Player sends a response. Either picked from generated options or typed
+ * freely. Append to history, generate NPC's reply.
+ */
+async function sendDialogueResponse(playerText) {
+  const adv = AppState.adventure;
+  const dlg = adv.activeDialogue;
+  if (!dlg) return;
+  if (!playerText || !playerText.trim()) return;
+
+  dlg.history.push({ role: 'player', text: playerText.trim() });
+  dlg.turn++;
+  renderDialogue();
+  $('dlgBody').scrollTop = $('dlgBody').scrollHeight;
+
+  // Lock the input while NPC is "thinking"
+  $('dlgInput').disabled = true;
+  $('dlgSendBtn').disabled = true;
+  $('dlgOptions').innerHTML = '<div class="dlg-loading">…</div>';
+
+  await generateNpcResponse(/* isOpening */ false);
+
+  $('dlgInput').disabled = false;
+  $('dlgSendBtn').disabled = false;
+  $('dlgInput').value = '';
+}
+
+/**
+ * Call the LLM to produce an NPC turn:
+ *   - in-character response text
+ *   - 3 player response options (varied tone — friendly, neutral, hostile)
+ *   - dispositionDelta in [-15, +15] reflecting how the LAST player message landed
+ *   - mood: 'engaged' | 'wary' | 'angry' | 'pleased' | 'closing'
+ *   - shouldEnd: true if NPC is signalling they're done talking
+ *
+ * For the opening turn, no dispositionDelta — just an in-character greeting.
+ */
+async function generateNpcResponse(isOpening) {
+  const adv = AppState.adventure;
+  const dlg = adv.activeDialogue;
+  const W   = AppState.world;
+  if (!dlg) return;
+
+  const npc = adv.npcs?.[dlg.npcKey];
+  if (!npc) { endDialogue(); return; }
+
+  // Build context — character, NPC details, recent dialogue history, world
+  const playerLine = `${adv.playerName || 'a traveler'} (${adv.playerArchetype?.label || 'unknown'}, faction: ${adv.playerFaction?.name || 'unaffiliated'})`;
+  const npcLine    = `${npc.name} — ${npc.role || 'unknown role'}${npc.faction ? `, member of ${npc.faction}` : ''}. Disposition: ${npc.disposition || 0}/100. ${npc.description || ''}`;
+  const traitsLine = Array.isArray(npc.traits) && npc.traits.length ? `Traits: ${npc.traits.join(', ')}.` : '';
+  const memoryLine = npc.relationshipNote ? `Past: ${npc.relationshipNote}` : '';
+
+  // Recent conversation — last 8 turns max to keep prompt size reasonable
+  const recent = dlg.history.slice(-8).map(h =>
+    h.role === 'player' ? `PLAYER: ${h.text}` : `${npc.name.toUpperCase()}: ${h.text}`
+  ).join('\n');
+
+  const sceneCtx = `Setting: ${adv.currentRegion || W.worldName} — chapter ${adv.chapter}.`;
+
+  const prompt = isOpening
+    ? `You are roleplaying ${npc.name} in the world of "${W.worldName}".
+
+NPC: ${npcLine}
+${traitsLine}
+${memoryLine}
+
+PLAYER WHO JUST APPROACHED: ${playerLine}
+${sceneCtx}
+
+The player has just walked up to talk to you. Respond as ${npc.name} would — voice, attitude, and content shaped by your role, faction, traits, and current disposition (${npc.disposition || 0}/100).
+- Disposition < -50: hostile, dismissive, threatening
+- Disposition -50 to -10: cold, suspicious, terse
+- Disposition -10 to +20: neutral, businesslike, curious
+- Disposition +20 to +60: friendly, helpful, open
+- Disposition > +60: warm, trusting, eager
+
+Return ONLY valid JSON:
+{
+  "npcText": "1-3 sentences, in-character, opening the conversation. Don't narrate stage directions — just speak.",
+  "mood": "engaged|wary|angry|pleased|closing",
+  "options": [
+    "First-person response option, friendly or open",
+    "First-person response option, neutral or probing",
+    "First-person response option, blunt or hostile"
+  ]
+}`
+    : `You are roleplaying ${npc.name} in "${W.worldName}".
+
+NPC: ${npcLine}
+${traitsLine}
+${memoryLine}
+
+PLAYER: ${playerLine}
+${sceneCtx}
+
+CONVERSATION SO FAR:
+${recent}
+
+Generate ${npc.name}'s next response. Stay in character — voice and attitude must reflect their role, faction, traits, and current disposition (${npc.disposition || 0}/100). Remember what was said earlier in this conversation. If the player insulted you, react. If they flattered you, react. If they asked for something, decide whether to give it.
+
+Also assess how the LAST player message landed:
+- dispositionDelta is an integer from -15 to +15
+- Positive if the player was respectful, helpful, gave gifts, agreed with you, or said something that resonates with your traits
+- Negative if the player insulted you, threatened you, made demands, or said something against your values
+- 0 if neutral exchange
+
+Set shouldEnd=true ONLY if it's natural for the conversation to end (you're walking away, you got what you needed, the player said goodbye, or things escalated badly).
+
+Return ONLY valid JSON:
+{
+  "npcText": "1-3 sentences, in-character. Just speech — no narration.",
+  "mood": "engaged|wary|angry|pleased|closing",
+  "dispositionDelta": -5,
+  "shouldEnd": false,
+  "options": [
+    "First-person player response option, choice 1",
+    "First-person player response option, choice 2",
+    "First-person player response option, choice 3"
+  ]
+}`;
+
+  try {
+    const raw = await callApi(prompt, { maxTokens: 600 });
+    const data = parseJsonResponse(raw);
+
+    const npcText = String(data.npcText || '...').trim();
+    const mood    = ['engaged','wary','angry','pleased','closing'].includes(data.mood) ? data.mood : 'engaged';
+    const options = Array.isArray(data.options)
+      ? data.options.slice(0, 3).map(o => String(o).trim()).filter(Boolean)
+      : [];
+    const delta   = isOpening ? 0 : Math.max(-15, Math.min(15, parseInt(data.dispositionDelta, 10) || 0));
+    const shouldEnd = !!data.shouldEnd;
+
+    // Apply disposition shift
+    if (delta !== 0) {
+      npc.disposition = Math.max(-100, Math.min(100, (npc.disposition || 0) + delta));
+    }
+
+    // Push NPC turn into history
+    dlg.history.push({
+      role: 'npc',
+      text: npcText,
+      mood,
+      delta,
+      options: shouldEnd ? [] : options,
+    });
+
+    renderDialogue();
+    $('dlgBody').scrollTop = $('dlgBody').scrollHeight;
+
+    // If NPC is done, replace options with a "leave" button
+    if (shouldEnd) {
+      $('dlgOptions').innerHTML = `<div class="dlg-end-note">${esc(npc.name)} signals the conversation is over.</div>`;
+    } else {
+      renderDialogueOptions(options);
+    }
+
+  } catch (err) {
+    diagLog('warn', `Dialogue gen failed: ${err.message}`);
+    $('dlgOptions').innerHTML = '<div class="dlg-error">The conversation falters. Try again or leave.</div>';
+    renderDialogueOptions([]);  // show input field but no auto-options
+  }
+}
+
+/** Render the dialogue history (NPC + player turns) into the body. */
+function renderDialogue() {
+  const adv = AppState.adventure;
+  const dlg = adv.activeDialogue;
+  if (!dlg) return;
+  const npc = adv.npcs?.[dlg.npcKey];
+
+  // Header
+  const head = $('dlgHeader');
+  if (head && npc) {
+    const sign = (npc.disposition || 0) > 0 ? '+' : '';
+    const moodLabel = (dlg.history.slice(-1)[0]?.mood) || 'meeting';
+    head.innerHTML = `
+      <div class="dlg-head-name">${esc(npc.name)}</div>
+      <div class="dlg-head-sub">${esc(npc.role || 'unknown')}${npc.faction ? ` · ${esc(npc.faction)}` : ''} · disposition ${sign}${npc.disposition || 0} · ${moodLabel}</div>`;
+  }
+
+  // Body — render every turn
+  const body = $('dlgBody');
+  if (body) {
+    body.innerHTML = dlg.history.map(turn => {
+      if (turn.role === 'player') {
+        return `<div class="dlg-msg dlg-msg-player">${esc(turn.text)}</div>`;
+      }
+      const deltaTag = turn.delta && turn.delta !== 0
+        ? `<span class="dlg-msg-delta ${turn.delta > 0 ? 'pos' : 'neg'}">${turn.delta > 0 ? '+' : ''}${turn.delta}</span>`
+        : '';
+      return `<div class="dlg-msg dlg-msg-npc"><div class="dlg-msg-text">${esc(turn.text)}</div>${deltaTag}</div>`;
+    }).join('');
+  }
+}
+
+/** Render the response option buttons + free-text input. */
+function renderDialogueOptions(options) {
+  const optsEl = $('dlgOptions');
+  if (!optsEl) return;
+  if (!options || !options.length) {
+    optsEl.innerHTML = '';
+    return;
+  }
+  optsEl.innerHTML = options.map((o, i) =>
+    `<button class="dlg-option-btn" data-idx="${i}">${esc(o)}</button>`
+  ).join('');
+  optsEl.querySelectorAll('.dlg-option-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      sendDialogueResponse(options[idx]);
+    });
+  });
+}
+
+/** Open the dialogue overlay (creates wiring on first open). */
+function openDialogueOverlay() {
+  const overlay = $('dlgOverlay');
+  if (!overlay) return;
+  overlay.classList.add('visible');
+
+  // Wire send button + Enter key (idempotent — addEventListener accumulates,
+  // so use onclick for replace semantics)
+  $('dlgSendBtn').onclick = () => {
+    const text = $('dlgInput').value.trim();
+    if (text) sendDialogueResponse(text);
+  };
+  $('dlgInput').onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      $('dlgSendBtn').click();
+    }
+  };
+  $('dlgLeaveBtn').onclick = () => endDialogue();
+}
+
+/**
+ * End the conversation. Persist what happened to the NPC's relationship note
+ * so future scenes know it occurred, then close the overlay and continue.
+ */
+async function endDialogue() {
+  const adv = AppState.adventure;
+  const dlg = adv.activeDialogue;
+  if (!dlg) {
+    $('dlgOverlay')?.classList.remove('visible');
+    return;
+  }
+
+  const npc = adv.npcs?.[dlg.npcKey];
+  if (npc && dlg.history.length > 1) {
+    // Build a brief summary from the conversation that future scenes can use
+    const turnCount   = dlg.history.length;
+    const dispShift   = (npc.disposition || 0) - (dlg.startDisposition || 0);
+    const lastNpcText = [...dlg.history].reverse().find(h => h.role === 'npc')?.text || '';
+    const summary = `Spoke with ${npc.name} in chapter ${adv.chapter} (${turnCount} exchanges). ${
+      dispShift > 5  ? 'They warmed to you.' :
+      dispShift < -5 ? 'They turned colder.' :
+      'The conversation was civil.'
+    } Their last words: "${lastNpcText.slice(0, 100)}${lastNpcText.length > 100 ? '…' : ''}"`;
+    npc.relationshipNote = summary;
+    npc.lastSeenChapter  = adv.chapter;
+  }
+
+  adv.activeDialogue = null;
+  $('dlgOverlay')?.classList.remove('visible');
+  saveCurrentWorld();
+
+  // Refresh the NPC card so the new disposition shows
+  renderAdventureNpcs();
 }
 
 /** Render the environmental resources panel — what's scavengeable here. */
@@ -1336,6 +1650,15 @@ FIELD NOTES:
     renderAdventureNpcs();
     renderAdventureEnvironment();
     updatePanelAdventure();
+
+    // After a new scene loads, scroll BOTH panels to the top so the user
+    // sees the new narrative and the new choices first. (Without this, if
+    // they were scrolled down looking at inventory or log, the new choices
+    // appear off-screen.)
+    const choicesPanel = document.querySelector('.adv-choices-panel');
+    if (choicesPanel) choicesPanel.scrollTop = 0;
+    const narrative = $('advNarrative');
+    if (narrative) narrative.scrollTop = 0;
 
   } catch (err) {
     // Silently retry once on parse failures or empty/incomplete responses —
@@ -1888,7 +2211,7 @@ function startLegacyAdventure() {
     factionStanding: inheritedStandings,
     currentRegion: null, history: [], currentChoices: [], worldImpacts: [],
     npcs: {}, environment: {},
-    objectives: [], playerStatus: 'active', statusContext: null,
+    objectives: [], playerStatus: 'active', statusContext: null, activeDialogue: null,
     legacyChain: preservedLegacy,
     // Legacy-specific fields — flagged so beginAdventure can reference them
     _inheritedFrom: predecessor.name,
@@ -1999,6 +2322,13 @@ export async function restoreAdventureFromSave() {
   const setup = $('advSetup'), game = $('advGame');
   if (setup) setup.style.display = 'none';
   if (game)  game.classList.add('visible');
+  // If a dialogue was open when the save was made, just close it cleanly —
+  // the conversation state isn't meaningful to resume, but the disposition
+  // changes from earlier turns are already persisted on the NPC.
+  if (AppState.adventure.activeDialogue) {
+    AppState.adventure.activeDialogue = null;
+    $('dlgOverlay')?.classList.remove('visible');
+  }
   renderAdventureCharacterCard();
   renderFactionStandings();
   renderAdventureHealth();

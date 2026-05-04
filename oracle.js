@@ -108,9 +108,6 @@ export async function sendChat() {
   // Build role-specific system prompt
   const roleConfig = ORACLE_ROLES[AppState.oracle.role] || ORACLE_ROLES.oracle;
   const W = AppState.world;
-  const simNote = AppState.nova.events.length
-    ? `\nSimulation year ${AppState.nova.year}. Recent events: ${AppState.nova.events.slice(-3).map(e => `Year ${e.year}: ${e.text}`).join(' | ')}.`
-    : '';
 
   // Proposal instruction — Oracle can suggest additions to the world
   const proposalInstruction = `
@@ -121,7 +118,7 @@ Only include one proposal per message, and only when it genuinely enriches the w
   const systemPrompt = `${roleConfig.systemPrompt}
 
 World: "${W.worldName}" (${W.genre || 'Fantasy'}).
-${buildWorldContext()}${simNote}
+${buildWorldContext()}
 
 Known lore entries the user can click: ${[
     ...(W.characters || []).map(c => c.name),

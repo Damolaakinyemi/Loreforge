@@ -122,7 +122,6 @@
       <button class="nav-btn"        data-nav="prophecies" title="Prophecies">◉</button>
       <button class="nav-btn"        data-nav="artifacts"  title="Artifacts">⚗</button>
       <div class="nav-sep"></div>
-      <button class="nav-btn"        data-nav="nova"       title="Nova — Civilization Sim">◎</button>
       <button class="nav-btn"        data-nav="dnd"        title="Adventure Mode">✦</button>
       <button class="nav-btn"        data-nav="oracle"     title="Oracle Guide">☽</button>
     </nav>
@@ -147,7 +146,6 @@
             <button class="map-pill" data-overlay="political">⚑ Political</button>
             <button class="map-pill" data-overlay="stability">◎ Stability</button>
           </div>
-          <button class="btn-sm" id="btnSimToggle">◎ Simulate</button>
           <button class="btn-sm" id="btnDndToggle">✦ Adventure</button>
           <button class="btn-sm" id="btnGenerateArtwork" title="Generate AI-painted map backdrop (Gemini)">🎨 Artwork</button>
           <button class="btn-sm" id="btnUploadMapArt" title="Upload your own map image (PNG/JPG) — works great with Azgaar's Fantasy Map Generator export">📁 Upload Map</button>
@@ -167,54 +165,6 @@
           </div>
         </div>
       </div>
-
-      <!-- NOVA -->
-      <div id="view-nova" class="view">
-        <div class="nova-layout">
-          <div class="nova-header">
-            <div class="nova-title-row">
-              <span class="nova-badge">◎ NOVA</span>
-              <h2 id="novaWorldName">Civilization Simulator</h2>
-              <span class="nova-year" id="novaYear">Year 0</span>
-            </div>
-            <p class="nova-subtitle">Watch civilizations grow, clash, and change. The Oracle guides you through critical moments.</p>
-          </div>
-          <div class="nova-body">
-            <div class="nova-map-panel">
-              <svg id="novaMap" viewBox="0 0 380 260" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
-            </div>
-            <div class="nova-log-panel">
-              <div class="nova-log-header">
-                <span>Chronicle</span>
-                <div class="nova-controls">
-                  <button class="btn-sm" id="btnSimPlay">▷ Run</button>
-                  <button class="btn-sm" id="btnSimStep">→ Step</button>
-                  <button class="btn-sm" id="btnSimReset">↺ Reset</button>
-                </div>
-              </div>
-              <div class="nova-log" id="novaLog"><div class="nova-empty">Run the simulation to begin the chronicle.</div></div>
-            </div>
-          </div>
-          <!-- Oracle Guide Strip -->
-          <div class="nova-oracle-strip" id="novaOracleStrip" style="display:none">
-            <span class="nova-oracle-icon">☽</span>
-            <span class="nova-oracle-msg" id="novaOracleMsg">The Oracle watches…</span>
-            <button class="btn-sm" id="btnNovaOracleAsk">Consult Oracle</button>
-          </div>
-          <div class="nova-intervene">
-            <div class="nova-intervene-header">
-              <span>⚡ Intervene</span>
-              <span class="nova-intervene-hint">Shape the fate of your world</span>
-            </div>
-            <div class="nova-intervene-options" id="novaOptions"></div>
-            <div class="nova-intervene-custom">
-              <input id="novaCustomInput" type="text" placeholder="Describe a custom intervention…"/>
-              <button class="btn-sm" id="btnNovaCustom">⚡ Apply</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- ADVENTURE MODE -->
       <div id="view-dnd" class="view">
         <div class="adv-layout">

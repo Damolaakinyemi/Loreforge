@@ -19,7 +19,7 @@ import {
 } from './state.js';
 import {callApi, generateMapArtwork, apiMetrics} from './apiService.js';
 import {initDiagnostics,diagLog,recordDiagError,runScan,executeRepairs,openDiag,closeDiag,toggleDiag} from './diagnostics.js';
-import {renderIllustratedMap,renderMiniMap} from './map.js';
+import {renderIllustratedMap} from './map.js';
 import {
   esc, $, showScreen, openModal, closeModal, showToast,
   addCitationLinks,
@@ -31,10 +31,6 @@ import {
   showAdventureSetup, resetAdventure, beginAdventure, updatePanelAdventure,
   restoreAdventureFromSave, initAdventureHooks,
 } from './adventure.js';
-import {
-  renderNovaInterventions, runSimStep, applyCustomIntervention,
-  startSimulation, resetSimulation, exportTimeline, initNovaHooks,
-} from './nova.js';
 import {
   renderOracleRoleBar, sendChat, oracleProactiveGreeting,
   oracleAbout, restoreOracleChat, clearChat, handleCitationClick, initOracleHooks,
@@ -178,7 +174,7 @@ function setNav(navId) {
   document.querySelectorAll('.nav-btn[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===navId));
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
 
-  const viewMap={map:'view-map',nova:'view-nova',dnd:'view-dnd',oracle:'view-oracle'};
+  const viewMap={map:'view-map',dnd:'view-dnd',oracle:'view-oracle'};
   if(viewMap[navId]) {
     $(viewMap[navId])?.classList.add('active');
   } else {
@@ -187,7 +183,6 @@ function setNav(navId) {
 
   switch(navId) {
     case 'map':    updatePanelMap(); break;
-    case 'nova':   updatePanelNova(); break;
     case 'dnd':
       if (!AppState.adventure.active) showAdventureSetup();
       updatePanelAdventure();
@@ -217,29 +212,8 @@ function updatePanelMap() {
     </div>`).join('')}
   </div>`;
   scroll.querySelectorAll('[data-region]').forEach(el=>el.addEventListener('click',()=>openRegionModal(el.dataset.region)));
-  footer.innerHTML=`<button class="btn-add" id="btnGotoSim">◎ Start Simulation</button>`;
-  $('btnGotoSim').addEventListener('click',()=>setNav('nova'));
-}
-
-function updatePanelNova() {
-  $('panelTitle').textContent='Nova Sim';
-  $('panelSub').textContent=`Year ${AppState.nova.year}`;
-  const W=AppState.world,sim=AppState.nova;
-  if(!W){$('panelScroll').innerHTML='';$('panelFooter').innerHTML='';return;}
-  $('panelScroll').innerHTML=`<div style="padding:.65rem 1rem">
-    ${(W.regions||[]).map(r=>{
-      const rs=sim.regionState[r.name]||{power:50,stability:50};
-      return `<div style="margin-bottom:.65rem">
-        <div style="font-size:.72rem;color:var(--parch-dim);margin-bottom:.2rem;font-family:var(--fd);font-size:.65rem">${esc(r.name)}</div>
-        <div style="height:4px;background:var(--bord-f);border-radius:2px;margin-bottom:.1rem">
-          <div style="height:100%;width:${rs.power}%;background:${r.color||'#4a6a8a'};border-radius:2px;transition:width .5s"></div>
-        </div>
-        <div style="font-size:.6rem;color:var(--faintest)">Power ${rs.power}%  ·  Stability ${rs.stability}%</div>
-      </div>`;
-    }).join('')}
-  </div>`;
-  $('panelFooter').innerHTML=`<button class="btn-add" id="btnExportTimeline">↓ Export Timeline</button>`;
-  $('btnExportTimeline').addEventListener('click',exportTimeline);
+  footer.innerHTML=`<button class="btn-add" id="btnGotoDnd">✦ Start Adventure</button>`;
+  $('btnGotoDnd').addEventListener('click',()=>setNav('dnd'));
 }
 
 function updatePanelOracle() {
@@ -317,7 +291,6 @@ function initWorld() {
   const W = AppState.world;
   $('mapLabel').textContent = `${W.worldName} — World Map`;
   $('oracleSubtitle').textContent = ORACLE_ROLES[AppState.oracle.role]?.description || 'Your guide';
-  $('novaWorldName').textContent = W.worldName;
 
   // Restore persisted Oracle chat or start fresh
   const savedHistory = loadOracleChat();
@@ -333,12 +306,8 @@ function initWorld() {
   chatMsgs.removeEventListener('click', handleCitationClick);
   chatMsgs.addEventListener('click', handleCitationClick);
 
-  $('novaLog').innerHTML = '<div class="nova-empty">Run the simulation to begin the chronicle.</div>';
-  $('novaYear').textContent = 'Year 0';
   renderOracleRoleBar();
   renderMap();
-  renderMiniMapView();
-  renderNovaInterventions();
   resetAdventure();
   showScreen('main');
   setNav('map');
@@ -366,11 +335,6 @@ function refreshMapArtButtonVisibility() {
   if (!btn) return;
   const has = !!(AppState.world && AppState.world.mapArtwork);
   btn.style.display = has ? '' : 'none';
-}
-
-function renderMiniMapView() {
-  if (!hasWorld()) return;
-  renderMiniMap('novaMap', AppState.world, AppState.nova);
 }
 
 /** Switch map overlay mode and re-render */
@@ -822,7 +786,6 @@ function bindEvents() {
   });
 
   // Map toolbar
-  $('btnSimToggle').addEventListener('click',()=>setNav('nova'));
   $('btnDndToggle').addEventListener('click',()=>setNav('dnd'));
   $('btnGenerateArtwork')?.addEventListener('click', generateMapArtworkForCurrentWorld);
   $('btnUploadMapArt')?.addEventListener('click', () => {
@@ -892,16 +855,8 @@ function bindEvents() {
 
     switch (e.key.toLowerCase()) {
       case 'm': setNav('map'); break;
-      case 'n': setNav('nova'); break;
       case 'a': setNav('dnd'); break;
       case 'o': setNav('oracle'); setTimeout(() => $('chatInput')?.focus(), 50); break;
-      case ' ':
-        // Space → step Nova if on Nova view
-        if (AppState.activeNav === 'nova') {
-          e.preventDefault();
-          runSimStep();
-        }
-        break;
       case '1': setMapOverlay('illustrated'); break;
       case '2': setMapOverlay('political'); break;
       case '3': setMapOverlay('stability'); break;
@@ -911,13 +866,6 @@ function bindEvents() {
   // Region modal close
   $('btnRegionClose').addEventListener('click',()=>closeModal('regionModal'));
   $('regionModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal('regionModal');});
-
-  // Nova
-  $('btnSimPlay').addEventListener('click',startSimulation);
-  $('btnSimStep').addEventListener('click',runSimStep);
-  $('btnSimReset').addEventListener('click',resetSimulation);
-  $('btnNovaCustom').addEventListener('click',applyCustomIntervention);
-  $('novaCustomInput').addEventListener('keydown',e=>{if(e.key==='Enter')applyCustomIntervention();});
 
   // Adventure Mode
   $('btnDndToggle').addEventListener('click', () => setNav('dnd'));
@@ -1042,8 +990,6 @@ function boot() {
   initDiagnostics();
   // Wire adventure module's side-effect callbacks before any user interaction
   initAdventureHooks({ setNav, sendChat });
-  // Wire nova module's side-effect callbacks
-  initNovaHooks({ setNav, sendChat, renderMap, renderMiniMapView, updatePanelNova, initNovaState });
   // Wire oracle module's side-effect callbacks
   initOracleHooks({ setNav, renderMap, openAddEntryModal });
   bindEvents();

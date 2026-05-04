@@ -35,7 +35,6 @@ import {
   addCitationLinks, describeStatusContext, typeReuseHint,
   findOrCreateNpcKey, pruneStaleNpcs,
 } from './utils.js';
-import { renderMiniMap } from './map.js';
 
 // Side-effect callbacks set by app.js at startup time. Stored in a module-private
 // closure so the adventure functions don't need to thread them through every call.
@@ -1327,11 +1326,6 @@ export async function generateAdventureScene(sceneType, prevChoice, retryAttempt
     .map(h => `Chapter ${h.chapter}: "${h.choiceText}" → ${h.outcome}`)
     .join(' | ');
 
-  // Nova world state (compound what's happened in simulation)
-  const simState = AppState.nova.events.length
-    ? `The world is currently at Year ${AppState.nova.year}. Recent events: ${AppState.nova.events.slice(-3).map(e => e.text).join(' | ')}.`
-    : '';
-
   // Scene-type-specific instruction
   const sceneInstruction = {
     OPENING:      `Write the opening scene. The player is ${adv.playerName || 'a traveler'} from ${adv.playerOrigin?.name}, a member of ${adv.playerFaction?.name}. Begin in medias res — something is already happening. Ground the scene in specific lore details from the world.`,
@@ -1391,7 +1385,6 @@ export async function generateAdventureScene(sceneType, prevChoice, retryAttempt
     // Shared context block used by both calls — single source of truth
     const sharedCtx = `WORLD: "${W.worldName}" (${W.genre})
 WORLD LORE: ${buildWorldContext()}
-${simState}
 
 PLAYER: ${playerCtx}
 ARCHETYPE: ${archStr}
@@ -1636,15 +1629,6 @@ FIELD NOTES:
     $('advChoices').querySelectorAll('.adv-choice-btn').forEach(btn => {
       btn.addEventListener('click', () => makeAdventureChoice(btn.dataset.choiceId));
     });
-
-    // World pulse feeds into Nova
-    if (scene.worldPulse) {
-      const nova = AppState.nova;
-      nova.year += Math.floor(1 + Math.random() * 4);
-      nova.events.push({ year: nova.year, text: `[Adventure] ${scene.worldPulse}`, type: 'discovery' });
-      // Inline renderMiniMapView equivalent — adventure scenes can move the year
-      if (hasWorld()) renderMiniMap('novaMap', AppState.world, AppState.nova);
-    }
 
     // Render NPC cards and environment panel
     renderAdventureNpcs();

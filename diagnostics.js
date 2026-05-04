@@ -73,7 +73,7 @@ const CHECKS = [
   {
     id: 'dom', label: 'DOM', canRepair: false,
     test: async () => {
-      const required = ['worldMap','chatMsgs','panelScroll','novaLog'];
+      const required = ['worldMap','chatMsgs','panelScroll'];
       const missing  = required.filter(id => !document.getElementById(id));
       if (missing.length) throw new Error(`Missing: ${missing.join(', ')}`);
       return 'Core DOM OK';
